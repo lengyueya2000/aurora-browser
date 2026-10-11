@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.Cursor
 import android.net.Uri
 import android.os.Environment
+import android.os.SystemClock
 import android.webkit.URLUtil
 
 /** 交给 `DownloadManager` 的一次下载请求。 */
@@ -25,6 +26,8 @@ data class DownloadItem(
     val totalBytes: Long,
     val mimeType: String?,
     val reason: Int,
+    /** 字节/秒。0 表示「还不知道」（刚入队，或者已经停下）。 */
+    val speed: Long = 0L,
 ) {
     val isRunning: Boolean get() = status == DownloadManager.STATUS_RUNNING ||
         status == DownloadManager.STATUS_PENDING || status == DownloadManager.STATUS_PAUSED
@@ -43,6 +46,12 @@ class DownloadsRepository(private val context: Context) {
 
     private val manager: DownloadManager?
         get() = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+
+    /**
+     * 速度计。系统下载器只给「已下载多少字节」，速度得自己按两次采样的差算，所以这个
+     * 实例必须活过单次 [query] 调用。
+     */
+    private val speed = DownloadSpeed()
 
     /**
      * 入队。返回下载 id；地址不可下载或系统服务不可用时返回 null。
@@ -78,6 +87,7 @@ class DownloadsRepository(private val context: Context) {
         val cursor: Cursor = runCatching {
             dm.query(DownloadManager.Query())
         }.getOrNull() ?: return emptyList()
+        val now = SystemClock.elapsedRealtime()
         return cursor.use { c ->
             val idCol = c.getColumnIndex(DownloadManager.COLUMN_ID)
             val titleCol = c.getColumnIndex(DownloadManager.COLUMN_TITLE)
@@ -88,19 +98,25 @@ class DownloadsRepository(private val context: Context) {
             val reasonCol = c.getColumnIndex(DownloadManager.COLUMN_REASON)
             buildList {
                 while (c.moveToNext()) {
+                    val id = if (idCol >= 0) c.getLong(idCol) else 0L
+                    val soFar = if (soFarCol >= 0) c.getLong(soFarCol) else 0L
                     add(
                         DownloadItem(
-                            id = if (idCol >= 0) c.getLong(idCol) else 0L,
+                            id = id,
                             title = if (titleCol >= 0) c.getString(titleCol).orEmpty() else "",
                             status = if (statusCol >= 0) c.getInt(statusCol) else 0,
-                            bytesDownloaded = if (soFarCol >= 0) c.getLong(soFarCol) else 0L,
+                            bytesDownloaded = soFar,
                             totalBytes = if (totalCol >= 0) c.getLong(totalCol) else -1L,
                             mimeType = if (mimeCol >= 0) c.getString(mimeCol) else null,
                             reason = if (reasonCol >= 0) c.getInt(reasonCol) else 0,
+                            // 每次查询都记一次采样：两次查询之间隔了多久，速度就按多久算。
+                            speed = speed.sample("file-$id", soFar, now),
                         ),
                     )
                 }
-            }.sortedByDescending { it.id }
+            }
+                .sortedByDescending { it.id }
+                .also { list -> speed.retain(list.mapTo(mutableSetOf()) { "file-${it.id}" }) }
         }
     }
 

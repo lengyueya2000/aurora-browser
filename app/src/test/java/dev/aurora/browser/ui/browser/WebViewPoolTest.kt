@@ -376,6 +376,46 @@ class WebViewPoolTest {
     }
 
     /**
+     * 去广告脚本要在 `onPageStarted` 就注入，不能等 `onPageFinished`。
+     *
+     * 站点的前贴片广告配置写在播放器容器的 `data-*` 上，页面脚本在 DOMContentLoaded 时
+     * 就读走它并把广告插件装上——那时候再注入已经晚了。
+     */
+    @Test fun pageStartInjectsAdBlockBeforePageScripts() {
+        val pool = newPool(CountingFactory())
+        pool.blockTrackers = { true }
+        val web = pool.get("adblock", false)
+        shadowOf(web).webViewClient.onPageStarted(web, "https://a.com", null)
+        assertThat(shadowOf(web).lastEvaluatedJavascript)
+            .contains(AdBlockScript.PREROLL_ATTRIBUTE_PREFIX)
+    }
+
+    /** 关掉拦截开关时两处都不注入——用户在隐私页关掉的就是这个开关。 */
+    @Test fun adBlockIsNotInjectedWhenBlockingIsOff() {
+        val pool = newPool(CountingFactory())
+        pool.blockTrackers = { false }
+        val web = pool.get("adblock-off", false)
+        val client = shadowOf(web).webViewClient
+        client.onPageStarted(web, "https://a.com", null)
+        assertThat(shadowOf(web).lastEvaluatedJavascript ?: "").doesNotContain("__auroraAdBlock")
+        client.onPageFinished(web, "https://a.com")
+        assertThat(shadowOf(web).lastEvaluatedJavascript ?: "").doesNotContain("__auroraAdBlock")
+    }
+
+    /** `onPageFinished` 那次是兜底：`onPageStarted` 的注入可能落到旧文档上。 */
+    @Test fun pageFinishedReinjectsAdBlockAsABackstop() {
+        val pool = newPool(CountingFactory())
+        pool.blockTrackers = { true }
+        val web = pool.get("adblock-late", false)
+        shadowOf(web).webViewClient.onPageFinished(web, "https://a.com")
+        val script = shadowOf(web).lastEvaluatedJavascript
+        assertThat(script).contains("__auroraAdBlock")
+        // 同一次注入里另外两段还得在，别把浮层和留白挤掉。
+        assertThat(script).contains(MediaOverlay.SCRIPT)
+        assertThat(script).contains(WebViewPool.BottomInsetElementId)
+    }
+
+    /**
      * 页面上的按钮点下去要能到宿主，而且是**在主线程**——桥的方法跑在 WebView 的 JS
      * 线程上，直接回调会让宿主在非主线程碰 Compose 状态和系统服务。
      */

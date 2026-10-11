@@ -81,10 +81,19 @@ import dev.aurora.browser.ui.reader.ReaderScreen
 import dev.aurora.browser.ui.settings.SettingsScreen
 import dev.aurora.browser.ui.theme.Aurora
 import dev.aurora.browser.ui.theme.AuroraSpacing
+import kotlinx.coroutines.delay
 
 /** 扫码结果与扫码 Intent 的约定常量（与 zxing 的扫码 App 兼容）。 */
 private const val SCAN_ACTION = "com.google.zxing.client.android.SCAN"
 private const val SCAN_RESULT = "SCAN_RESULT"
+
+/**
+ * 下载页的刷新间隔。
+ *
+ * 半秒是「看着像在动」和「别太费电」之间的折中：进度、已下载字节、速度都是会变的数字，
+ * 只在打开那一刻取一次的话，用户看到的是一个停住的进度条。
+ */
+private const val DOWNLOADS_REFRESH_MS = 500L
 
 /**
  * 从 Context 里解出 Activity。
@@ -181,6 +190,20 @@ fun BrowserScreen(
 
     // 关掉的标签要连 WebView 一起释放，否则池里会留着看不见的实例（内存 + 后台 JS）。
     LaunchedEffect(tabs.map { it.id }) { pool.retain(tabs.map { it.id }.toSet()) }
+
+    // 下载页开着的时候按 [DOWNLOADS_REFRESH_MS] 刷一次。
+    // 只在真的有东西在跑时才查库：闲着的查询纯属浪费，也让速度计的采样间隔变得没有意义。
+    // 循环不 break 而是每轮重新判断，这样在页面上新开一个下载时不用重建这个协程。
+    LaunchedEffect(surface) {
+        if (surface != BrowserSurface.Downloads) return@LaunchedEffect
+        while (true) {
+            delay(DOWNLOADS_REFRESH_MS)
+            if (downloadItems.any { it.isRunning } || offlineItems.any { it.isRunning }) {
+                downloadItems = downloads.query()
+                offlineItems = OfflineMedia.items(context)
+            }
+        }
+    }
 
     // 一次性提示（剪贴板为空、没有扫码应用……）
     LaunchedEffect(message) {

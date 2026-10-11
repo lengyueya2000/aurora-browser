@@ -1,6 +1,7 @@
 package dev.aurora.browser.media
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
@@ -13,6 +14,8 @@ import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
+import dev.aurora.browser.data.DownloadSpeed
+import dev.aurora.browser.data.estimateTotalBytes
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -51,6 +54,12 @@ object OfflineMedia {
     private var managerInstance: DownloadManager? = null
 
     private val executor = Executors.newFixedThreadPool(DOWNLOAD_THREADS)
+
+    /**
+     * 速度计。速度问不出来，只能按「已下载字节」的变化自己采样，所以它必须活过单次
+     * [items] 调用——每次刷新都新建一个的话，永远只有一次采样，速度永远是 0。
+     */
+    private val speed = DownloadSpeed()
 
     /** 离线缓存本体。`SimpleCache` 要求目录独占，进程内只能有一个实例。 */
     @Synchronized
@@ -124,6 +133,7 @@ object OfflineMedia {
 
     /** 当前所有离线下载（含进行中与已完成）。 */
     fun items(context: Context): List<OfflineItem> = runCatching {
+        val now = SystemClock.elapsedRealtime()
         // 走 downloadIndex 的游标而不是 getCurrentDownloads()：前者明确是「索引里的全部」，
         // 已完成的那条也在里面，后者只保证是「当前活动的那批」。
         downloadManager(context).downloadIndex.getDownloads().use { cursor ->
@@ -138,10 +148,13 @@ object OfflineMedia {
                             state = stateOf(download.state),
                             percent = download.percentDownloaded,
                             bytes = download.bytesDownloaded,
+                            contentLength = download.contentLength,
+                            // 采样必须每次都记：两次刷新之间隔了多久，速度就按多久算。
+                            speed = speed.sample(url, download.bytesDownloaded, now),
                         ),
                     )
                 }
-            }
+            }.also { list -> speed.retain(list.mapTo(mutableSetOf()) { it.url }) }
         }
     }.getOrDefault(emptyList())
 
@@ -199,6 +212,13 @@ data class OfflineItem(
     val state: State,
     val percent: Float,
     val bytes: Long,
+    /**
+     * `Download.contentLength`。**HLS 上恒为 -1**：分片长度要下完才知道，Media3 的
+     * `DownloadManager` 构造 `Download` 时就把这个字段写死成 `C.LENGTH_UNSET`。
+     */
+    val contentLength: Long = -1L,
+    /** 字节/秒。0 表示「还不知道」（刚开始下，或者已经停下）。 */
+    val speed: Long = 0L,
 ) {
     enum class State { QUEUED, DOWNLOADING, COMPLETED, FAILED, STOPPED }
 
@@ -209,4 +229,10 @@ data class OfflineItem(
 
     /** 0f..1f；未知进度时返回 0。 */
     val progress: Float get() = percent.coerceIn(0f, 100f) / 100f
+
+    /**
+     * 总大小。已知就用真值；HLS 上未知，靠「已下载 ÷ 已完成比例」反推。
+     * 0 表示「还不知道」——刚开始下，或者比例低到估不准。
+     */
+    val totalBytes: Long get() = estimateTotalBytes(contentLength, bytes, percent)
 }

@@ -211,24 +211,35 @@ class WebViewPool(
                     // 换页就把上一条视频嗅探到的地址清掉：留着的话，新页面上点「下载」
                     // 会下到上一个视频的流。
                     MediaSniffer.clear(tabId)
+                    // 去广告脚本要抢在页面自己的脚本之前跑。站点的前贴片广告配置写在播放器
+                    // 容器的 `data-*` 上，页面脚本在 DOMContentLoaded 时读走它、顺手把广告
+                    // 插件装上——等 onPageFinished 再注入就晚了。这里注入是「尽量早」，
+                    // 不是保证：万一落到了旧文档上，onPageFinished 那次和脚本自身的
+                    // MutationObserver + 轮询还能兜住（见 AdBlockScript 的注释）。
+                    if (blockTrackers()) {
+                        runCatching { view.evaluateJavascript(AdBlockScript.SCRIPT, null) }
+                    }
                     onPageStarted(tabId)
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
                     onPageFinished(tabId, view.title.orEmpty(), url)
-                    // 两段脚本合在一次 evaluateJavascript 里注入，省一次跨进程往返：
+                    // 三段脚本合在一次 evaluateJavascript 里注入，省两次跨进程往返：
+                    // - 去广告（与 onPageStarted 同一次注入，幂等，这里是兜底）；
                     // - 悬浮工具栏盖在网页之上，页面末尾不留白的话，滚到底时最后几行会
                     //   永久停在工具栏底下、滚也滚不出来，所以给文档尾部补一段滚动空间；
                     // - 给页面里的每个 <video> 贴上「全屏 / 下载 / 投屏」浮层。
-                    // 两段都是完整语句的 IIFE，拼起来等价于依次执行。
+                    // 三段都是完整语句的 IIFE，拼起来等价于依次执行。
+                    val adBlock = if (blockTrackers()) AdBlockScript.SCRIPT + "\n" else ""
                     runCatching {
                         view.evaluateJavascript(
-                            bottomInsetScript(PageBottomInsetCssPx) + "\n" + MediaOverlay.SCRIPT,
+                            adBlock +
+                                bottomInsetScript(PageBottomInsetCssPx) + "\n" + MediaOverlay.SCRIPT,
                         ) { raw ->
                             // 正常是 "ok"；脚本语法错或被站点拦下来时这里会是错误文本，
                             // debug 构建下留一条日志，省得再靠猜（见 README 的排查记录）。
                             if (BuildConfig.DEBUG && raw != "\"ok\"") {
-                                Log.d(TAG, "media overlay injection -> $raw")
+                                Log.d(TAG, "page script injection -> $raw")
                             }
                         }
                     }

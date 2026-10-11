@@ -65,6 +65,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -197,7 +199,7 @@ class PlayerActivity : ComponentActivity() {
                     pip = inPip.value,
                     onSpeedChanged = { preferences.rememberSpeed(it) },
                     onEnded = { preferences.forget(url) },
-                    onPip = { enterPip() },
+                    onPip = { hint -> enterPip(hint) },
                     onCast = { castVideo() },
                     onDownload = { downloadVideo() },
                     onExit = { finish() },
@@ -238,10 +240,13 @@ class PlayerActivity : ComponentActivity() {
      * 宽高比先按 [PlayerWindow] 夹到系统允许的区间——竖屏短剧的比例会越界，
      * 越界时系统直接抛异常，点了没反应比报错更难查。
      */
-    private fun enterPip() {
+    private fun enterPip(sourceRect: android.graphics.Rect?) {
         val (width, height) = PlayerWindow.pipAspectRatio(videoWidth, videoHeight)
         val params = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(width, height))
+            // 画面当前的位置：系统拿它当缩放动画的起点。不给的话动画会从屏幕中心长出来，
+            // Android 12 起这已经是「推荐做法」而不是可选优化。
+            .apply { sourceRect?.let { setSourceRectHint(it) } }
             .build()
         val entered = runCatching { enterPictureInPictureMode(params) }.getOrDefault(false)
         if (!entered) {
@@ -352,7 +357,8 @@ private fun PlayerScreen(
     pip: Boolean,
     onSpeedChanged: (Float) -> Unit,
     onEnded: () -> Unit,
-    onPip: () -> Unit,
+    /** 参数是画面在窗口里的位置：进小窗时交给系统当过渡动画的起点。拿不到时为 null。 */
+    onPip: (android.graphics.Rect?) -> Unit,
     onCast: () -> Unit,
     onDownload: () -> Unit,
     onExit: () -> Unit,
@@ -371,6 +377,21 @@ private fun PlayerScreen(
     var videoGroups by remember { mutableStateOf(emptyList<TrackGroup>()) }
     var selectedQuality by remember { mutableStateOf<String?>(null) }
     var hint by remember { mutableStateOf<GestureHint?>(null) }
+
+    /**
+     * 画面在窗口里的位置。
+     *
+     * 进小窗时把它作为 `setSourceRectHint` 交给系统：不给的话，系统只能猜一个起点，
+     * 小窗的缩放动画会从屏幕中央长出来，明显比别的应用差。
+     *
+     * Lint 的 `PictureInPictureIssue` 建议的是「`setAutoEnterEnabled(true)` 加上
+     * `setSourceRectHint`」两件事。这里只做后者：前者是「用户一离开应用就自动进小窗」，
+     * 那是另一种行为，而用户要的是**按一下「小窗」才进**，所以那条告警是刻意留下的。
+     *
+     * 用 `android.graphics.Rect` 而不是 Compose 的 `Rect`：这个值要一路传到 Activity 的
+     * `PictureInPictureParams` 里，在那边再转换一次没有意义。
+     */
+    var pipHint by remember { mutableStateOf<android.graphics.Rect?>(null) }
 
     // 拖动进度时不要被播放器自己的进度回调拽回去，所以拖动期间冻结显示的进度。
     var scrubbing by remember { mutableStateOf(false) }
@@ -453,7 +474,14 @@ private fun PlayerScreen(
                 view.player = player
                 view.resizeMode = resizeMode
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { coords ->
+                    val b = coords.boundsInWindow()
+                    pipHint = android.graphics.Rect(
+                        b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt(),
+                    )
+                },
         )
 
         // 手势层铺在画面之上、控制层之下。控制层里没有点击处理的地方不消费事件，
@@ -536,7 +564,7 @@ private fun PlayerScreen(
                     resizeMode = mode
                     panel = PlayerPanel.NONE
                 },
-                onPip = onPip,
+                onPip = { onPip(pipHint) },
                 onCast = onCast,
                 onDownload = onDownload,
                 onExit = onExit,
