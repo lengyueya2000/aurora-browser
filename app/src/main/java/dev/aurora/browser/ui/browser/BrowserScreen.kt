@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.webkit.WebSettings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -55,6 +56,7 @@ import dev.aurora.browser.BuildConfig
 import dev.aurora.browser.data.DownloadItem
 import dev.aurora.browser.data.DownloadsRepository
 import dev.aurora.browser.domain.BackOutcome
+import dev.aurora.browser.ui.cast.CastController
 import dev.aurora.browser.ui.components.ActionGridTile
 import dev.aurora.browser.ui.components.AuroraBottomSheet
 import dev.aurora.browser.ui.components.BottomToolbar
@@ -99,7 +101,6 @@ fun BrowserScreen(
     val bookmarks by vm.bookmarks.collectAsState()
     val history by vm.history.collectAsState()
     val engine by vm.searchEngine.collectAsState()
-    val showFeed by vm.showFeed.collectAsState()
     val blockTrackers by vm.blockTrackers.collectAsState()
     val trackerCount by vm.trackerCount.collectAsState()
     val sslWarning by vm.sslWarning.collectAsState()
@@ -108,14 +109,27 @@ fun BrowserScreen(
     val controller = remember { MutableBrowserController() }
     val pool = remember { WebViewPool(context) }
     val downloads = remember { DownloadsRepository(context) }
+    val cast = remember(context) { CastController(context) }
+    // 网页视频全屏：View 要挂到窗口内容之上，所以需要 Activity；预览/单测下退化为空实现。
+    val activity = context as? Activity
+    val fullscreen = remember(activity) {
+        VideoFullscreenController(activity?.let { ActivityFullscreenHost(it) } ?: NoopFullscreenHost)
+    }
     // WebView 归池所有，离开组合不会自动销毁——必须显式回收，否则退出界面后仍在跑 JS。
-    DisposableEffect(Unit) { onDispose { pool.disposeAll() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            // 全屏视频是挂在窗口上的，退出界面时必须摘掉，否则会盖住下一个界面。
+            fullscreen.hide()
+            pool.disposeAll()
+        }
+    }
 
     var progress by remember { mutableIntStateOf(0) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var reader by remember { mutableStateOf<Pair<String, String>?>(null) }
     var libraryTab by remember { mutableStateOf(LibraryTab.BOOKMARKS) }
     var downloadItems by remember { mutableStateOf<List<DownloadItem>>(emptyList()) }
+    var mediaSheet by remember { mutableStateOf<MediaSheet?>(null) }
 
     // 关掉的标签要连 WebView 一起释放，否则池里会留着看不见的实例（内存 + 后台 JS）。
     LaunchedEffect(tabs.map { it.id }) { pool.retain(tabs.map { it.id }.toSet()) }
@@ -147,6 +161,9 @@ fun BrowserScreen(
             vm.showMessage(if (id != null) "已开始下载" else "无法开始下载")
             downloadItems = downloads.query()
         }
+        // 视频全屏：WebView 交出要全屏播放的 View，由我们挂到窗口上并切沉浸式。
+        pool.onShowFullscreenView = { view, callback -> fullscreen.show(view, callback) }
+        pool.onHideFullscreenView = { fullscreen.hide() }
     }
 
     val voiceLauncher = rememberLauncherForActivityResult(
@@ -167,6 +184,9 @@ fun BrowserScreen(
     val closeAllTabs = { tabs.forEach { t -> vm.closeTab(t.id) } }
 
     BackHandler(enabled = true) {
+        // 全屏视频最优先：全屏中按返回是「退出全屏」，而不是后退网页。
+        // 不拦这一下，用户在全屏里按返回会直接离开页面，画面还停在全屏黑底上。
+        if (fullscreen.onBackPressed()) return@BackHandler
         when (vm.onBack(canGoBack = controller.canGoBack())) {
             BackOutcome.PAGE_BACK -> controller.goBack()
             BackOutcome.EXIT_NOW -> (context as? Activity)?.finish()
@@ -193,7 +213,6 @@ fun BrowserScreen(
                 HomeScreen(
                     onNavigate = { vm.navigate(it) },
                     onSearch = { vm.openOmnibox() },
-                    showFeed = showFeed,
                 )
             } else {
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -299,8 +318,6 @@ fun BrowserScreen(
                 BrowserSurface.Settings -> SettingsScreen(
                     engine = engine,
                     onEngineChange = { vm.setSearchEngine(it) },
-                    showFeed = showFeed,
-                    onShowFeedChange = { vm.setShowFeed(it) },
                     blockTrackers = blockTrackers,
                     onBlockTrackersChange = { vm.setBlockTrackers(it) },
                     onOpenDownloads = {
@@ -371,6 +388,34 @@ fun BrowserScreen(
                         onPrivacy = { vm.openSurface(BrowserSurface.Privacy) },
                         onSettings = { vm.openSurface(BrowserSurface.Settings) },
                     )
+                    MenuGroupTitle("媒体")
+                    SettingRow(
+                        title = "下载视频",
+                        subtitle = "提取当前页面里的视频地址",
+                        icon = AuroraIcons.Download,
+                        onClick = {
+                            vm.closeMenu()
+                            pool.evaluateVideos(active.id) { sources ->
+                                when {
+                                    sources.isEmpty() -> vm.showMessage("本页没有找到可下载的视频")
+                                    // 只有一个源就直接下，不必再让用户选一次。
+                                    sources.size == 1 -> {
+                                        if (!enqueueVideo(context, downloads, sources.first(), active.url)) {
+                                            vm.showMessage("无法开始下载")
+                                        }
+                                        downloadItems = downloads.query()
+                                    }
+                                    else -> mediaSheet = MediaSheet.Download(sources)
+                                }
+                            }
+                        },
+                    )
+                    SettingRow(
+                        title = "投屏",
+                        subtitle = "屏幕镜像或把视频投到电视",
+                        icon = AuroraIcons.Desktop,
+                        onClick = { vm.closeMenu(); mediaSheet = MediaSheet.CastOptions },
+                    )
                     MenuGroupTitle("标签页")
                     SettingRow(
                         title = "新建标签页", icon = AuroraIcons.Add,
@@ -391,7 +436,95 @@ fun BrowserScreen(
                 }
             }
         }
+
+        // 媒体面板（下载视频 / 投屏）与菜单面板同层：都在避让层之外，遮罩才盖得住系统栏区域。
+        when (val sheet = mediaSheet) {
+            is MediaSheet.Download -> VideoSourceSheet(
+                title = "选择要下载的视频",
+                sources = sheet.sources,
+                icon = AuroraIcons.Download,
+                onPick = { source ->
+                    mediaSheet = null
+                    if (!enqueueVideo(context, downloads, source, active.url)) {
+                        vm.showMessage("无法开始下载")
+                    }
+                    downloadItems = downloads.query()
+                },
+                onDismiss = { mediaSheet = null },
+            )
+            is MediaSheet.CastVideo -> VideoSourceSheet(
+                title = "选择要投屏的视频",
+                sources = sheet.sources,
+                icon = AuroraIcons.Share,
+                onPick = { source ->
+                    mediaSheet = null
+                    if (!cast.playOnDevice(source.url, source.type)) {
+                        vm.showMessage("没有能投屏播放该视频的应用")
+                    }
+                },
+                onDismiss = { mediaSheet = null },
+            )
+            MediaSheet.CastOptions -> CastOptionsSheet(
+                onMirror = {
+                    mediaSheet = null
+                    if (!cast.openSystemCastSettings()) {
+                        vm.showMessage("请在系统快捷设置里打开「投屏」")
+                    }
+                },
+                onCastVideo = {
+                    pool.evaluateVideos(active.id) { sources ->
+                        when {
+                            sources.isEmpty() -> {
+                                mediaSheet = null
+                                vm.showMessage("本页没有找到可投屏的视频")
+                            }
+                            sources.size == 1 -> {
+                                mediaSheet = null
+                                if (!cast.playOnDevice(sources.first().url, sources.first().type)) {
+                                    vm.showMessage("没有能投屏播放该视频的应用")
+                                }
+                            }
+                            else -> mediaSheet = MediaSheet.CastVideo(sources)
+                        }
+                    }
+                },
+                onDismiss = { mediaSheet = null },
+            )
+            null -> Unit
+        }
     }
+}
+
+/**
+ * 媒体面板的三个形态。投屏与下载共用同一份「从页面提取出来的视频源」，
+ * 只是点下去之后一个入队下载、一个交给投屏播放器。
+ */
+private sealed interface MediaSheet {
+    data class Download(val sources: List<VideoSource>) : MediaSheet
+    data class CastVideo(val sources: List<VideoSource>) : MediaSheet
+    data object CastOptions : MediaSheet
+}
+
+/**
+ * 把提取到的视频地址交给 `DownloadManager`。
+ *
+ * `DownloadListener` 那条路拿不到 `userAgent`（这个地址不是页面主动触发的下载），
+ * 所以用 WebView 的默认 UA 补上——不少站点的视频 CDN 会校验 UA 与 Referer。
+ */
+private fun enqueueVideo(
+    context: Context,
+    downloads: DownloadsRepository,
+    source: VideoSource,
+    referer: String?,
+): Boolean {
+    val request = DownloadRequest(
+        url = source.url,
+        userAgent = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull(),
+        contentDisposition = null,
+        mimeType = source.type.takeIf { it.isNotBlank() },
+        contentLength = -1L,
+    )
+    return downloads.enqueue(request, referer = referer) != null
 }
 
 /** 菜单面板的 4×2 动作网格（规格 5.5）。 */

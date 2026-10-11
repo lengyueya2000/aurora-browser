@@ -39,19 +39,16 @@ class PrefsBrowserStoreTest {
     @Test fun preferencesSurviveANewStoreInstance() {
         PrefsBrowserStore(context).apply {
             setSearchEngine(SearchEngine.BAIDU)
-            setShowFeed(false)
             setBlockTrackers(false)
         }
         val reopened = PrefsBrowserStore(context)
         assertThat(reopened.searchEngine.value).isEqualTo(SearchEngine.BAIDU)
-        assertThat(reopened.showFeed.value).isFalse()
         assertThat(reopened.blockTrackers.value).isFalse()
     }
 
     @Test fun defaultsAreUsedOnFirstLaunch() {
         val store = PrefsBrowserStore(context)
         assertThat(store.searchEngine.value).isEqualTo(SearchEngine.Default)
-        assertThat(store.showFeed.value).isTrue()
         assertThat(store.blockTrackers.value).isTrue()
         assertThat(store.bookmarks.value).isEmpty()
         assertThat(store.history.value).isEmpty()

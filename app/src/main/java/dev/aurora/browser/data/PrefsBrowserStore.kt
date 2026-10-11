@@ -30,9 +30,6 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
     private val _engine = MutableStateFlow(SearchEngine.fromName(prefs.getString(KEY_ENGINE, null)))
     override val searchEngine: StateFlow<SearchEngine> = _engine.asStateFlow()
 
-    private val _feed = MutableStateFlow(prefs.getBoolean(KEY_FEED, true))
-    override val showFeed: StateFlow<Boolean> = _feed.asStateFlow()
-
     private val _block = MutableStateFlow(prefs.getBoolean(KEY_BLOCK, true))
     override val blockTrackers: StateFlow<Boolean> = _block.asStateFlow()
 
@@ -71,11 +68,6 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
     override fun setSearchEngine(engine: SearchEngine) {
         _engine.value = engine
         prefs.edit().putString(KEY_ENGINE, engine.name).apply()
-    }
-
-    override fun setShowFeed(enabled: Boolean) {
-        _feed.value = enabled
-        prefs.edit().putBoolean(KEY_FEED, enabled).apply()
     }
 
     override fun setBlockTrackers(enabled: Boolean) {
@@ -123,7 +115,6 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
         const val KEY_BOOKMARKS = "bookmarks"
         const val KEY_HISTORY = "history"
         const val KEY_ENGINE = "search_engine"
-        const val KEY_FEED = "home_feed"
         const val KEY_BLOCK = "block_trackers"
     }
 }

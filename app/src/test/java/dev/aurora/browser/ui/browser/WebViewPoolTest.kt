@@ -2,6 +2,9 @@ package dev.aurora.browser.ui.browser
 
 import android.content.Context
 import android.net.Uri
+import android.view.View
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebSettings
@@ -249,5 +252,95 @@ class WebViewPoolTest {
         // 页面本来就不滚动时直接返回，不留白。
         assertThat(script).contains("scrollHeight")
         assertThat(script).contains("window.addEventListener('load', run)")
+    }
+
+    private class FakePermissionRequest(private val resources: Array<String>) : PermissionRequest() {
+        var granted: Array<String>? = null
+        var denied = false
+        override fun getOrigin(): Uri = Uri.parse("https://a.com")
+        override fun getResources(): Array<String> = resources
+        override fun grant(resources: Array<String>) { granted = resources }
+        override fun deny() { denied = true }
+    }
+
+    /**
+     * 网页视频全屏：WebView 通过 `WebChromeClient` 把要全屏播放的 View 交出来，
+     * 池必须原样转给 UI 层。真机上不接管这个回调，点全屏就没反应（视频留在小窗里）。
+     */
+    @Test fun customViewFullscreenIsHandedToTheUiLayer() {
+        val f = CountingFactory()
+        val pool = newPool(f)
+        val web = pool.get("a", false)
+        val view = View(context)
+        val callback = object : WebChromeClient.CustomViewCallback {
+            override fun onCustomViewHidden() {}
+        }
+        var shown: View? = null
+        var hidden = 0
+        pool.onShowFullscreenView = { v, _ -> shown = v }
+        pool.onHideFullscreenView = { hidden++ }
+
+        shadowOf(web).webChromeClient.onShowCustomView(view, callback)
+        assertThat(shown).isSameInstanceAs(view)
+
+        shadowOf(web).webChromeClient.onHideCustomView()
+        assertThat(hidden).isEqualTo(1)
+    }
+
+    /**
+     * 站点权限只放行 DRM 的 protected media id（全屏播放加密流要用），
+     * 相机 / 麦克风 / 定位继续拒绝——这是隐私页对用户的承诺。
+     */
+    @Test fun permissionRequestsOnlyGrantProtectedMedia() {
+        val f = CountingFactory()
+        val web = newPool(f).get("a", false)
+        val chrome = shadowOf(web).webChromeClient
+
+        val camera = FakePermissionRequest(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+        chrome.onPermissionRequest(camera)
+        assertThat(camera.denied).isTrue()
+        assertThat(camera.granted).isNull()
+
+        val drm = FakePermissionRequest(arrayOf(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID))
+        chrome.onPermissionRequest(drm)
+        assertThat(drm.granted).asList()
+            .containsExactly(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID)
+        assertThat(drm.denied).isFalse()
+
+        // 混合请求：只授予 DRM，其余仍然拒绝。
+        val mixed = FakePermissionRequest(
+            arrayOf(
+                PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID,
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE,
+            ),
+        )
+        chrome.onPermissionRequest(mixed)
+        assertThat(mixed.granted).asList()
+            .containsExactly(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID)
+    }
+
+    /** 下载视频走的是「进页面找 <video>/<source>」，靠 evaluateJavascript 注入提取脚本。 */
+    @Test fun evaluateVideosInjectsTheExtractorScript() {
+        val f = CountingFactory()
+        val pool = newPool(f)
+        val web = pool.get("a", false)
+        pool.evaluateVideos("a") { }
+        assertThat(shadowOf(web).lastEvaluatedJavascript).isEqualTo(VideoExtractor.SCRIPT)
+    }
+
+    /** 标签不存在时立刻回空列表，别把回调挂死。 */
+    @Test fun evaluateVideosOnUnknownTabReturnsEmpty() {
+        val pool = newPool(CountingFactory())
+        var sources: List<VideoSource>? = null
+        pool.evaluateVideos("missing") { sources = it }
+        assertThat(sources).isEmpty()
+    }
+
+    /** 原始返回值接口在标签不存在时回 null，调用方据此走降级分支。 */
+    @Test fun evaluateRawOnUnknownTabReturnsNull() {
+        val pool = newPool(CountingFactory())
+        var raw: String? = "sentinel"
+        pool.evaluateRaw("missing", "1+1") { raw = it }
+        assertThat(raw).isNull()
     }
 }

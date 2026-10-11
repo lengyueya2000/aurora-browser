@@ -2,6 +2,30 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+      投屏与「把视频交给播放器打开」都要先问系统「有没有应用能接」。Android 11+ 的包
+      可见性规则下，不声明 <queries> 就查不到目标包，resolveActivity 会恒为 null——
+      投屏入口会永远报「本机没有可用的投屏功能」，扫码/语音也会恒判为「未安装」。
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.settings.CAST_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="com.android.settings.WIFI_DISPLAY_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="video/*" />
+        </intent>
+        <intent>
+            <action android:name="com.google.zxing.client.android.SCAN" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+    </queries>
+
     <application
         android:name=".AuroraApp"
         android:allowBackup="true"

@@ -49,12 +49,16 @@ class HomeScreenTest {
         assertThat(n).isEqualTo(1)
     }
 
-    @Test fun feedCanBeHidden() {
+    /**
+     * 「为你推荐」信息流模块已整体移除：主页现在只有搜索入口 + 快捷入口。
+     * 断言标题不在，同时断言下面的推荐卡片也不在（光删标题会留下悬空的卡片）。
+     */
+    @Test fun homeNoLongerShowsTheRecommendationFeed() {
         compose.setContent {
-            AuroraTheme {
-                HomeScreen(onNavigate = {}, onSearch = {}, shortcuts = shortcuts, showFeed = false)
-            }
+            AuroraTheme { HomeScreen(onNavigate = {}, onSearch = {}, shortcuts = shortcuts) }
         }
         compose.onNodeWithText("为你推荐").assertDoesNotExist()
+        compose.onNodeWithText("Compose 1.11 稳定版发布：延迟布局与共享元素转场").assertDoesNotExist()
+        compose.onNodeWithText("快捷入口").assertExists()
     }
 }

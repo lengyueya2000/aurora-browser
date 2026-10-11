@@ -4,9 +4,11 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
+import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -48,6 +50,11 @@ class WebViewPool(
     var onExternalUrl: (tabId: String, url: String) -> Unit = { _, _ -> }
     var onDownloadRequest: (tabId: String, request: DownloadRequest) -> Unit = { _, _ -> }
     var onLoadError: (tabId: String, description: String) -> Unit = { _, _ -> }
+    // 视频全屏：字段名不叫 onShowCustomView/onHideCustomView，避免和 WebChromeClient
+    // 的同名回调撞名——在匿名对象内部写 onShowCustomView(...) 会递归调用自己。
+    var onShowFullscreenView: (view: View, callback: WebChromeClient.CustomViewCallback) -> Unit =
+        { _, _ -> }
+    var onHideFullscreenView: () -> Unit = {}
     var blockTrackers: () -> Boolean = { false }
 
     private val views = mutableMapOf<String, WebView>()
@@ -92,6 +99,22 @@ class WebViewPool(
             }
         }.onFailure { onResult("", "") }
     }
+
+    /**
+     * 执行脚本，把 `evaluateJavascript` 的**原始**返回值（JSON 文本）回传。
+     *
+     * 与 [evaluate] 的区别：那个把返回值当 `[标题, 正文]` 解析，这个不做任何解析，
+     * 留给调用方按自己的结构处理（视频源列表就是一个对象数组）。
+     */
+    fun evaluateRaw(tabId: String, script: String, onResult: (String?) -> Unit) {
+        val web = views[tabId] ?: return onResult(null)
+        runCatching { web.evaluateJavascript(script) { raw -> onResult(raw) } }
+            .onFailure { onResult(null) }
+    }
+
+    /** 提取当前页面里可下载 / 可投屏的视频源。 */
+    fun evaluateVideos(tabId: String, onResult: (List<VideoSource>) -> Unit) =
+        evaluateRaw(tabId, VideoExtractor.SCRIPT) { onResult(VideoExtractor.parse(it)) }
 
     private fun destroy(webView: WebView) {
         (webView.parent as? ViewGroup)?.removeView(webView)
@@ -233,6 +256,30 @@ class WebViewPool(
 
                 override fun onReceivedTitle(view: WebView, title: String?) {
                     onPageFinished(tabId, title.orEmpty(), view.url.orEmpty())
+                }
+
+                /**
+                 * 网页视频全屏。WebView 把要全屏播放的 View 交出来，**由应用负责**把它
+                 * 贴到窗口上并隐藏系统栏；不接管这个回调，`video.requestFullscreen()`
+                 * 会静默失败——表现就是「点全屏没反应，视频还在网页小窗里」。
+                 */
+                override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+                    onShowFullscreenView(view, callback)
+                }
+
+                override fun onHideCustomView() {
+                    onHideFullscreenView()
+                }
+
+                /**
+                 * 权限请求：只放行 DRM 的 protected media id（全屏播放加密流要用），
+                 * 相机 / 麦克风 / 定位 / 通知一律拒绝——与隐私页「站点权限一律拒绝」一致。
+                 * 不覆盖这个回调时默认就是全部拒绝，显式写出来是为了给 DRM 开个口子。
+                 */
+                override fun onPermissionRequest(request: PermissionRequest) {
+                    val granted = request.resources
+                        .filter { it == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID }
+                    if (granted.isEmpty()) request.deny() else request.grant(granted.toTypedArray())
                 }
             }
 

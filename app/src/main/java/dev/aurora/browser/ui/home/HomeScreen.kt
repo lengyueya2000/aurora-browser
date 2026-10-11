@@ -1,7 +1,6 @@
 package dev.aurora.browser.ui.home
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -24,10 +23,6 @@ import dev.aurora.browser.ui.components.BottomToolbarHeight
 import dev.aurora.browser.ui.icons.AuroraIcons
 import dev.aurora.browser.ui.theme.*
 
-/** 信息流缩略图的固定比例（宽 4 : 高 3），不取自间距刻度——它不是间距。 */
-private val FeedThumbWidth = 88.dp
-private val FeedThumbHeight = 66.dp
-
 /** 给悬浮工具栏留出的底部空间，取自工具栏自己的高度定义，避免两处各写一个数。 */
 private val BottomToolbarClearance = BottomToolbarHeight
 
@@ -42,20 +37,12 @@ val DefaultShortcuts = listOf(
     Shortcut("淘宝", "https://www.taobao.com"),
 )
 
-private data class FeedItem(val title: String, val source: String, val tag: String)
-private val DefaultFeed = listOf(
-    FeedItem("Compose 1.11 稳定版发布：延迟布局与共享元素转场", "Android Weekly", "技术"),
-    FeedItem("为什么现代浏览器都在重做标签管理？", "少数派", "产品"),
-    FeedItem("一次点击背后：追踪器拦截的技术原理拆解", "InfoQ", "隐私"),
-)
-
 @Composable
 fun HomeScreen(
     onNavigate: (String) -> Unit,
     onSearch: () -> Unit,
     modifier: Modifier = Modifier,
     shortcuts: List<Shortcut> = DefaultShortcuts,
-    showFeed: Boolean = true,
 ) {
     val c = Aurora.colors
     // 唯一滚动容器：快捷入口网格嵌在 LazyColumn 的一个 item 里，用非滚动网格
@@ -102,31 +89,6 @@ fun HomeScreen(
                             ShortcutTile(s, Modifier.weight(1f)) { onNavigate(s.url) }
                         }
                         repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
-            }
-        }
-        if (showFeed) {
-            item { SectionTitle("为你推荐") }
-            items(DefaultFeed.size) { i ->
-                val f = DefaultFeed[i]
-                Row(
-                    modifier = Modifier
-                        .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.s)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(AuroraRadius.m))
-                        .background(c.surface)
-                        .border(1.dp, c.divider, RoundedCornerShape(AuroraRadius.m))
-                        .padding(AuroraSpacing.m),
-                    horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.m),
-                ) {
-                    Box(modifier = Modifier.size(width = FeedThumbWidth, height = FeedThumbHeight)
-                        .clip(RoundedCornerShape(AuroraRadius.s)).background(c.bgElevated))
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AuroraSpacing.xs)) {
-                        Text(f.title, color = c.text, maxLines = 2)
-                        // 次级信息文字须 ≥4.5:1（同 Task 11 的 TabRowItem URL）：用 textMuted。
-                        Text("${f.tag} · ${f.source}", color = c.textMuted,
-                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
                     }
                 }
             }

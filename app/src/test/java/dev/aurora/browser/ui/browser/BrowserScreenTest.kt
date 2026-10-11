@@ -4,6 +4,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.ui.theme.AuroraTheme
 import org.junit.Rule
@@ -51,13 +52,18 @@ class BrowserScreenTest {
         compose.onNodeWithText("刷新").assertExists()
         compose.onNodeWithText("关闭全部标签页").assertExists()
         compose.onNodeWithText("标签页数量").assertExists()
+        // 媒体组：视频下载与投屏
+        compose.onNodeWithText("下载视频").assertExists()
+        compose.onNodeWithText("投屏").assertExists()
     }
 
     @Test fun menuSheetNewTabRowClosesTheSheetAndAddsATab() {
         val vm = BrowserViewModel()
         render(vm)
         vm.openMenu()
-        compose.onNodeWithText("新建标签页").performClick()
+        // 菜单加了「媒体」组之后整体变长，「标签页」那一组要滚一下才落进可点区域——
+        // 直接点一个被裁到视口外的节点，事件落不到它身上。
+        compose.onNodeWithText("新建标签页").performScrollTo().performClick()
         compose.onNodeWithText("新建标签页").assertDoesNotExist()
         assertThat(vm.tabsState.value).hasSize(2)
     }

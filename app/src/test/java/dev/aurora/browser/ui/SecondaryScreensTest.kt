@@ -44,7 +44,7 @@ class SecondaryScreensTest {
             AuroraTheme {
                 SettingsScreen(
                     engine = SearchEngine.BING,
-                    onEngineChange = {}, showFeed = true, onShowFeedChange = {},
+                    onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
@@ -63,7 +63,7 @@ class SecondaryScreensTest {
             AuroraTheme {
                 SettingsScreen(
                     engine = SearchEngine.BING,
-                    onEngineChange = { picked = it }, showFeed = true, onShowFeedChange = {},
+                    onEngineChange = { picked = it },
                     blockTrackers = true, onBlockTrackersChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
@@ -73,23 +73,36 @@ class SecondaryScreensTest {
         assertThat(picked).isEqualTo(SearchEngine.BAIDU)
     }
 
-    @Test fun settingsRowsToggleTheirSwitches() {
-        var feed: Boolean? = null
+    @Test fun trackerSwitchRowToggles() {
         var block: Boolean? = null
         compose.setContent {
             AuroraTheme {
                 SettingsScreen(
                     engine = SearchEngine.BING, onEngineChange = {},
-                    showFeed = true, onShowFeedChange = { feed = it },
                     blockTrackers = false, onBlockTrackersChange = { block = it },
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
         }
-        compose.onNodeWithText("主页信息流").performClick()
         compose.onNodeWithText("追踪器拦截").performClick()
-        assertThat(feed).isFalse()
         assertThat(block).isTrue()
+    }
+
+    /**
+     * 「为你推荐」信息流模块已整体移除，设置里的开关也必须一起消失——
+     * 留一个点不动的开关比没有这个开关更糟。
+     */
+    @Test fun settingsNoLongerOffersTheRemovedHomeFeedToggle() {
+        compose.setContent {
+            AuroraTheme {
+                SettingsScreen(
+                    engine = SearchEngine.BING, onEngineChange = {},
+                    blockTrackers = true, onBlockTrackersChange = {},
+                    onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
+                )
+            }
+        }
+        compose.onNodeWithText("主页信息流").assertDoesNotExist()
     }
 
     @Test fun settingsDownloadsRowAndBackFire() {
@@ -99,7 +112,6 @@ class SecondaryScreensTest {
             AuroraTheme {
                 SettingsScreen(
                     engine = SearchEngine.BING, onEngineChange = {},
-                    showFeed = true, onShowFeedChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
                     onOpenDownloads = { opened++ }, onBack = { back++ }, versionName = "9.9-test",
                 )
@@ -318,7 +330,7 @@ class SecondaryScreensTest {
             AuroraTheme {
                 SettingsScreen(
                     engine = SearchEngine.BING,
-                    onEngineChange = {}, showFeed = true, onShowFeedChange = {},
+                    onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )

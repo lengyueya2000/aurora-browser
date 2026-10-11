@@ -87,10 +87,8 @@ class BrowserStoreTest {
     @Test fun preferenceSettersUpdateTheirFlows() {
         val store = InMemoryBrowserStore()
         store.setSearchEngine(SearchEngine.GOOGLE)
-        store.setShowFeed(false)
         store.setBlockTrackers(false)
         assertThat(store.searchEngine.value).isEqualTo(SearchEngine.GOOGLE)
-        assertThat(store.showFeed.value).isFalse()
         assertThat(store.blockTrackers.value).isFalse()
     }
 

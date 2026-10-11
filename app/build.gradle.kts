@@ -22,8 +22,8 @@ android {
         applicationId = "dev.aurora.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -65,6 +65,14 @@ android {
             isIncludeAndroidResources = true
         }
     }
+}
+
+// Robolectric 按 @Config 复用沙箱：同一个 JVM 里，sdk=34 的所有测试类共享一套 Looper /
+// Choreographer / 静态状态。Compose 测试一旦留下没被回收的组合，这个沙箱就再也不会上报
+// idle，于是同一批里其它 Compose 测试全部 AppNotIdleException（单独跑却是绿的）。
+// 每个测试类一个新 JVM 把状态隔离开——线上只有一个进程，所以这不是掩盖问题。
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    forkEvery = 1L
 }
 
 dependencies {

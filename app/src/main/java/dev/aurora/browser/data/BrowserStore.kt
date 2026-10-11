@@ -17,7 +17,6 @@ interface BrowserStore {
     val bookmarks: StateFlow<List<Bookmark>>
     val history: StateFlow<List<HistoryEntry>>
     val searchEngine: StateFlow<SearchEngine>
-    val showFeed: StateFlow<Boolean>
     val blockTrackers: StateFlow<Boolean>
 
     fun addBookmark(title: String, url: String)
@@ -26,7 +25,6 @@ interface BrowserStore {
     fun clearHistory()
 
     fun setSearchEngine(engine: SearchEngine)
-    fun setShowFeed(enabled: Boolean)
     fun setBlockTrackers(enabled: Boolean)
 
     companion object {
@@ -40,7 +38,6 @@ class InMemoryBrowserStore(
     bookmarks: List<Bookmark> = emptyList(),
     history: List<HistoryEntry> = emptyList(),
     engine: SearchEngine = SearchEngine.Default,
-    feed: Boolean = true,
     block: Boolean = true,
 ) : BrowserStore {
 
@@ -52,9 +49,6 @@ class InMemoryBrowserStore(
 
     private val _engine = MutableStateFlow(engine)
     override val searchEngine: StateFlow<SearchEngine> = _engine.asStateFlow()
-
-    private val _feed = MutableStateFlow(feed)
-    override val showFeed: StateFlow<Boolean> = _feed.asStateFlow()
 
     private val _block = MutableStateFlow(block)
     override val blockTrackers: StateFlow<Boolean> = _block.asStateFlow()
@@ -83,7 +77,6 @@ class InMemoryBrowserStore(
     override fun clearHistory() { _history.value = emptyList() }
 
     override fun setSearchEngine(engine: SearchEngine) { _engine.value = engine }
-    override fun setShowFeed(enabled: Boolean) { _feed.value = enabled }
     override fun setBlockTrackers(enabled: Boolean) { _block.value = enabled }
 
     private var clock: Long = 0

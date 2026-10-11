@@ -27,8 +27,6 @@ import dev.aurora.browser.ui.theme.AuroraSpacing
 fun SettingsScreen(
     engine: SearchEngine,
     onEngineChange: (SearchEngine) -> Unit,
-    showFeed: Boolean,
-    onShowFeedChange: (Boolean) -> Unit,
     blockTrackers: Boolean,
     onBlockTrackersChange: (Boolean) -> Unit,
     onOpenDownloads: () -> Unit,
@@ -53,12 +51,6 @@ fun SettingsScreen(
                 title = "深色模式",
                 subtitle = "Aurora 只提供深色主题，跟随系统字号缩放",
                 value = "已开启",
-            )
-            SwitchRow(
-                title = "主页信息流",
-                subtitle = "在新标签页显示「为你推荐」",
-                checked = showFeed,
-                onCheckedChange = onShowFeedChange,
             )
 
             SettingGroup("隐私与安全")
