@@ -262,11 +262,11 @@ git commit -m "chore: scaffold Aurora Browser with JVM-runnable Compose tests"
 - Consumes: Task 1 的工程
 - Produces:
   - `data class AuroraColors(val bg: Color, val bgElevated: Color, val surface: Color, val surfaceHover: Color, val border: Color, val divider: Color, val text: Color, val textSecondary: Color, val textMuted: Color, val textDisabled: Color, val brand: Color, val brandStrong: Color, val onBrand: Color, val success: Color, val warning: Color, val danger: Color, val scrim: Color, val glass: Color, val glassBorder: Color)`
-  - `object AuroraSpacing { val xs: Dp = 4.dp; val s = 8.dp; val m = 12.dp; val l = 16.dp; val xl = 24.dp; val xxl = 32.dp; val xxxl = 48.dp }`
+  - `object AuroraSpacing { val xs: Dp = 4.dp; val s = 8.dp; val m = 12.dp; val l = 16.dp; val xl = 24.dp; val xxl = 32.dp; val xxxl: Dp = 48.dp; val touchTarget: Dp = 48.dp; val touchGap: Dp = 8.dp }`
   - `object AuroraRadius { val xs = 6.dp; val s = 10.dp; val m = 14.dp; val l = 20.dp; val xl = 28.dp; val full = 999.dp }`
   - `object AuroraMotion { const val FAST = 120; const val BASE = 200; const val SLOW = 320; val standard = CubicBezierEasing(0.2f, 0f, 0f, 1f) }`
   - `val LocalAuroraColors: ProvidableCompositionLocal<AuroraColors>`
-  - `@Composable fun AuroraTheme(content: @Composable () -> Unit)`
+  - `@Composable fun AuroraTheme(colors: AuroraColors = DarkAuroraColors, content: @Composable () -> Unit)`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -474,7 +474,8 @@ git commit -m "feat(theme): add Aurora design tokens and dark-first theme"
   - `object AuroraIcons { @DrawableRes fun of(name: String): Int }`，以及具名常量
     `val Back, Forward, Home, Tabs, More, Search, Close, Add, ShieldCheck, Lock, Star,
      History, Download, Reader, Incognito, Share, Settings, Extensions, Mic, QrCode,
-     ChevronRight, Minus, TextSize, Moon, Volume, Globe, Trash, Clock, Desktop, Translate, Image, Sparkle`
+     ChevronRight, Minus, TextSize, Moon, Volume, Globe, Trash, Clock, Desktop, Translate, Image, Sparkle,
+     Refresh, Clipboard`（共 34 个）
   - 图标名与原型 `prototype/index.html` 中的 `data-i` 值一致（`arrow-left`、`house-simple` …）
 
 - [ ] **Step 1: 写图标转换脚本**
