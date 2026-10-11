@@ -1507,7 +1507,8 @@ fun SettingRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(text = title, color = c.text)
             if (subtitle != null) {
-                Text(text = subtitle, color = c.textDisabled, fontFamily = FontFamily.Monospace,
+                // 次级信息文字须 ≥4.5:1：textDisabled(#64748B) 在 surface 上仅 ~3.3:1，用 textMuted。
+                Text(text = subtitle, color = c.textMuted, fontFamily = FontFamily.Monospace,
                     style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
             }
         }
@@ -1856,7 +1857,7 @@ class TabRepository {
     val activeId: StateFlow<String> = _activeId.asStateFlow()
 
     val active: BrowserTab
-        get() = _tabs.value.first { it.id == _activeId.value }
+        get() = _tabs.value.firstOrNull { it.id == _activeId.value } ?: _tabs.value.first()
 
     private fun newId(): String = UUID.randomUUID().toString()
 
@@ -2305,7 +2306,9 @@ fun WebViewContainer(
     }
 
     LaunchedEffect(url) {
-        if (!url.isNullOrBlank()) webView.loadUrl(url)
+        // 只加载「WebView 当前不在的地址」：onPageFinished 会把真实地址回写进 active.url，
+        // 若不加这道判断，重定向/站内跳转会因 url 变化再触发一次 loadUrl（重复加载 + 多一条历史）。
+        if (!url.isNullOrBlank() && url != webView.url) webView.loadUrl(url)
     }
 
     AndroidView(factory = { webView }, modifier = modifier)
@@ -2778,6 +2781,7 @@ package dev.aurora.browser.ui.browser
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -2792,6 +2796,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -2821,7 +2826,16 @@ fun TabSwitcherScreen(
     val c = Aurora.colors
     var layout by remember { mutableStateOf(initialLayout) }
 
-    Column(modifier = modifier.fillMaxSize().background(c.bg)) {
+    // 顶层组装时本屏是叠在常驻的 Page/WebView 之上的覆盖层（见 Task 12）。不透明的
+    // background 只是绘制、不是命中边界，留白处的手势会穿透到下面的 WebView；
+    // 因此这里自己吃掉留白点击。detectTapGestures 只消费、不加语义角色，且要求
+    // down 未被消费，故卡片/分段控件等子控件仍能收到自己的点击（同 AuroraBottomSheet）。
+    Column(
+        modifier = modifier
+            .pointerInput(Unit) { detectTapGestures { } }
+            .fillMaxSize()
+            .background(c.bg),
+    ) {
         // 顶栏：计数 + 视图切换 + 新建 + 关闭全部
         Row(
             modifier = Modifier.fillMaxWidth().padding(AuroraSpacing.l),
@@ -3286,6 +3300,7 @@ package dev.aurora.browser.ui.browser
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -3301,6 +3316,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -3323,11 +3339,21 @@ fun OmniboxScreen(
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
-    Column(modifier = modifier.fillMaxSize().background(c.bg).padding(AuroraSpacing.m)) {
+    // 顶层组装时本屏是叠在常驻的 Page/WebView 之上的覆盖层（见 Task 12）。不透明的
+    // background 只是绘制、不是命中边界，留白处的手势会穿透到下面的 WebView；
+    // 因此这里自己吃掉留白点击。detectTapGestures 只消费、不加语义角色，且要求
+    // down 未被消费，故输入框/建议行等子控件仍能收到自己的点击（同 AuroraBottomSheet）。
+    Column(
+        modifier = modifier
+            .pointerInput(Unit) { detectTapGestures { } }
+            .fillMaxSize()
+            .background(c.bg)
+            .padding(AuroraSpacing.m),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(AuroraSpacing.touchTarget)
                 .clip(RoundedCornerShape(AuroraRadius.m))
                 .background(c.surface)
                 .border(1.5.dp, c.brand, RoundedCornerShape(AuroraRadius.m))
@@ -3598,7 +3624,7 @@ private fun ShortcutTile(s: Shortcut, modifier: Modifier = Modifier, onClick: ()
         Box(
             modifier = Modifier
                 .size(52.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(AuroraRadius.m))
                 .background(c.surfaceHover),
             contentAlignment = Alignment.Center,
         ) {
@@ -3697,48 +3723,52 @@ fun BrowserScreen(
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing),
         ) {
-            when (surface) {
-                BrowserSurface.Page -> if (active.isNewTab) {
-                    HomeScreen(
-                        onNavigate = { vm.navigate(it) },
-                        onSearch = { vm.openOmnibox() },
-                    )
-                } else {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        // 顶部 2dp 加载进度条（规格 5.3）。轨道常驻但透明，仅进度段着色，
-                        // 这样加载开始/结束不会引起 WebView 上下抖动。
-                        Box(modifier = Modifier.fillMaxWidth().height(2.dp)) {
-                            if (progress in 1..99) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(progress / 100f)
-                                        .height(2.dp)
-                                        .background(Aurora.colors.brand),
-                                )
-                            }
+            // Page 内容常驻：WebView 一旦离开组合就会被 onDispose 销毁，回到网页态只能重新加载，
+            // 丢掉滚动位置与前进/后退历史（地址栏/标签网格来回切一次就中招）。
+            // 因此 Page 分支不再受 surface 控制，地址栏与标签网格改为叠在它之上的不透明覆盖层。
+            if (active.isNewTab) {
+                HomeScreen(
+                    onNavigate = { vm.navigate(it) },
+                    onSearch = { vm.openOmnibox() },
+                )
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // 顶部 2dp 加载进度条（规格 5.3）。轨道常驻但透明，仅进度段着色，
+                    // 这样加载开始/结束不会引起 WebView 上下抖动。
+                    Box(modifier = Modifier.fillMaxWidth().height(2.dp)) {
+                        if (progress in 1..99) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progress / 100f)
+                                    .height(2.dp)
+                                    .background(Aurora.colors.brand),
+                            )
                         }
-                        // 网页态的地址栏：显示域名 + 站点身份；点击回到输入态。
-                        // 加载中右侧按钮变「停止加载」（规格 5.3）。
-                        val loading = progress in 1..99
-                        OmniboxBar(
-                            displayUrl = hostOf(active.url),
-                            security = securityOf(active.url),
-                            onTap = { vm.openOmnibox() },
-                            trailingIcon = if (loading) AuroraIcons.Close else AuroraIcons.Refresh,
-                            onTrailingAction = {
-                                if (loading) controller.stopLoading() else controller.reload()
-                            },
-                        )
-                        WebViewContainer(
-                            controller = controller,
-                            url = active.url,
-                            onProgress = { progress = it },
-                            onTitleChange = { vm.updateActiveTab(title = it) },
-                            onUrlChange = { vm.updateActiveTab(url = it) },
-                            modifier = Modifier.weight(1f),
-                        )
                     }
+                    // 网页态的地址栏：显示域名 + 站点身份；点击回到输入态。
+                    // 加载中右侧按钮变「停止加载」（规格 5.3）。
+                    val loading = progress in 1..99
+                    OmniboxBar(
+                        displayUrl = hostOf(active.url),
+                        security = securityOf(active.url),
+                        onTap = { vm.openOmnibox() },
+                        trailingIcon = if (loading) AuroraIcons.Close else AuroraIcons.Refresh,
+                        onTrailingAction = {
+                            if (loading) controller.stopLoading() else controller.reload()
+                        },
+                    )
+                    WebViewContainer(
+                        controller = controller,
+                        url = active.url,
+                        // 每次进度/地址/标题变化都刷新工具栏的前进/后退可用态。
+                        onProgress = { progress = it; controller.refreshHistory() },
+                        onTitleChange = { vm.updateActiveTab(title = it); controller.refreshHistory() },
+                        onUrlChange = { vm.updateActiveTab(url = it); controller.refreshHistory() },
+                        modifier = Modifier.weight(1f),
+                    )
                 }
+            }
+            when (surface) {
                 BrowserSurface.Omnibox -> OmniboxScreen(
                     query = query,
                     suggestions = suggestions,
@@ -3752,6 +3782,7 @@ fun BrowserScreen(
                     onNewTab = { vm.newTab() }, onCloseAll = closeAllTabs,
                     onDone = { vm.closeTabSwitcher() },
                 )
+                BrowserSurface.Page -> Unit
             }
 
             // 悬浮工具栏只在网页/主页态常驻。地址栏聚焦态底部是系统键盘（规格屏 02），
@@ -3760,8 +3791,9 @@ fun BrowserScreen(
             if (surface == BrowserSurface.Page) {
                 BottomToolbar(
                     tabCount = tabs.size,
-                    canGoBack = controller.canGoBack(),
-                    canGoForward = controller.canGoForward(),
+                    // 读 State.value 才会在组合期订阅快照，历史变化时工具栏才会重组。
+                    canGoBack = controller.canGoBackState.value,
+                    canGoForward = controller.canGoForwardState.value,
                     onBack = { controller.goBack() },
                     onForward = { controller.goForward() },
                     onHome = { vm.newTab() },
@@ -3776,7 +3808,8 @@ fun BrowserScreen(
                 Text(
                     "再按一次退出",
                     color = Aurora.colors.textSecondary,
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    // 与悬浮工具栏同用 BottomCenter：不抬起来会被工具栏盖住（96dp 高过工具栏）。
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp),
                 )
             }
         }
@@ -3819,19 +3852,33 @@ fun BrowserScreen(
 > ```kotlin
 > class MutableBrowserController : BindableController {
 >     private var impl: BrowserController? = null
->     override fun bind(impl: BrowserController) { this.impl = impl }
->     override fun unbind() { impl = null }
+>     // 历史状态用 snapshot state 暴露：工具栏在组合期读取，plain var 不会触发重组。
+>     private val _canGoBack = mutableStateOf(false)
+>     private val _canGoForward = mutableStateOf(false)
+>     val canGoBackState: State<Boolean> get() = _canGoBack
+>     val canGoForwardState: State<Boolean> get() = _canGoForward
+>
+>     override fun bind(impl: BrowserController) { this.impl = impl; refreshHistory() }
+>     override fun unbind() { impl = null; _canGoBack.value = false; _canGoForward.value = false }
+>     /** 页面导航后由调用方刷新，使工具栏的前进/后退可用态跟随 WebView。 */
+>     fun refreshHistory() {
+>         _canGoBack.value = impl?.canGoBack() ?: false
+>         _canGoForward.value = impl?.canGoForward() ?: false
+>     }
 >     override fun loadUrl(url: String) { impl?.loadUrl(url) }
 >     override fun reload() { impl?.reload() }
 >     override fun stopLoading() { impl?.stopLoading() }
->     override fun goBack() { impl?.goBack() }
->     override fun goForward() { impl?.goForward() }
->     override fun canGoBack() = impl?.canGoBack() ?: false
->     override fun canGoForward() = impl?.canGoForward() ?: false
+>     override fun goBack() { impl?.goBack(); refreshHistory() }
+>     override fun goForward() { impl?.goForward(); refreshHistory() }
+>     override fun canGoBack() = _canGoBack.value
+>     override fun canGoForward() = _canGoForward.value
 > }
 > ```
 > 它实现 `BindableController`（Task 9 定义），所以 `WebViewContainer` 的
-> `(controller as? BindableController)?.bind(impl)` 能生效。
+> `(controller as? BindableController)?.bind(impl)` 能生效。历史可用态经 snapshot
+> state 暴露给工具栏：`canGoBack()`/`canGoForward()` 仍返回当前值，供 `BackHandler`
+> 与测试使用；`canGoBackState`/`canGoForwardState` 供组合期订阅。`goBack()`/`goForward()`
+> 后立即 `refreshHistory()`，`WebViewContainer` 在进度/地址/标题回调里也会调用它。
 
 `MainActivity.kt`：
 
