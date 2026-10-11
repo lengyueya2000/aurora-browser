@@ -2380,7 +2380,7 @@ git commit -m "feat(browser): wrap WebView behind a testable BrowserController"
       fun openOmnibox(); fun closeOmnibox(); fun setQuery(q: String)
       fun openTabSwitcher(); fun closeTabSwitcher()
       fun openMenu(); fun closeMenu()
-      fun newTab(url: String? = null); fun closeTab(id: String); fun selectTab(id: String)
+      fun newTab(url: String? = null): BrowserTab; fun closeTab(id: String); fun selectTab(id: String)
       fun updateActiveTab(url: String? = null, title: String? = null)   // WebView 回调写入当前标签
       fun navigate(url: String)                          // 关掉 omnibox + 落到 Page
       fun onBack(canGoBack: Boolean): BackOutcome        // 由 Activity 调用
@@ -2574,10 +2574,11 @@ class BrowserViewModel(
     fun openMenu() { _menuOpen.value = true }
     fun closeMenu() { _menuOpen.value = false }
 
-    fun newTab(url: String? = null) {
-        tabs.newTab(url)
+    fun newTab(url: String? = null): BrowserTab {
+        val tab = tabs.newTab(url)
         _surface.value = BrowserSurface.Page
         _menuOpen.value = false
+        return tab
     }
 
     fun closeTab(id: String) = tabs.close(id)
@@ -2663,11 +2664,13 @@ git commit -m "feat(browser): add BrowserSurface state machine and BrowserViewMo
 ```kotlin
 package dev.aurora.browser.ui.browser
 
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.height
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.domain.model.BrowserTab
 import dev.aurora.browser.ui.theme.AuroraTheme
@@ -2736,6 +2739,15 @@ class TabSwitcherScreenTest {
         render(onCloseAll = { n++ })
         compose.onNodeWithContentDescription("关闭全部标签页").performClick()
         assertThat(n).isEqualTo(1)
+    }
+
+    // 卡片上的关闭按钮是独立可点目标，必须满足全局约束「最小触摸目标 48×48dp」。
+    // 可见底片是 28dp，触摸区由外层 48dp 盒承载，这里量的就是它。
+    @Test fun tabCloseButtonsMeetTouchTarget() {
+        render()
+        val h = compose.onAllNodesWithContentDescription("关闭标签页")[0]
+            .getUnclippedBoundsInRoot().height
+        assertThat(h.value).isAtLeast(48f)
     }
 }
 ```
@@ -2916,13 +2928,12 @@ private fun TabCard(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit, on
             ),
     ) {
         Box(modifier = Modifier.fillMaxWidth().height(96.dp).background(c.bgElevated)) {
+            // 关闭是独立可点目标，触摸区必须 ≥48dp（全局约束「最小触摸目标 48×48dp」）。
+            // 可见的圆形底片仍保持 28dp，由 48dp 触摸区居中包裹它。
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(AuroraSpacing.s)
-                    .size(28.dp)
-                    .clip(RoundedCornerShape(AuroraRadius.full))
-                    .background(c.scrim)
+                    .size(AuroraSpacing.touchTarget)
                     .clickable(
                         role = Role.Button,
                         interactionSource = remember { MutableInteractionSource() },
@@ -2932,12 +2943,20 @@ private fun TabCard(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit, on
                     .semantics { contentDescription = "关闭标签页" },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    painter = painterResource(AuroraIcons.Close),
-                    contentDescription = null,
-                    tint = c.textSecondary,
-                    modifier = Modifier.size(14.dp),
-                )
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(AuroraRadius.full))
+                        .background(c.scrim),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(AuroraIcons.Close),
+                        contentDescription = null,
+                        tint = c.textSecondary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
             }
         }
         Text(
@@ -2984,7 +3003,7 @@ private fun TabRowItem(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit,
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.browser.TabSwitcherScreenTest"`
-Expected: BUILD SUCCESSFUL，6 tests passed
+Expected: BUILD SUCCESSFUL，7 tests passed
 
 - [ ] **Step 5: 提交**
 
@@ -3846,10 +3865,10 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 6: 跑全部测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL，全部任务累计 75 tests passed
+Expected: BUILD SUCCESSFUL，全部任务累计 76 tests passed
 
 > 本任务新增的 `OmniboxScreenTest`（4 例）、`HomeScreenTest`（4 例）、`BrowserScreenTest`（5 例）
-> 共 13 例；加上前 11 个任务的 62 例，合计 75 例。
+> 共 13 例；加上前 11 个任务的 63 例，合计 76 例。
 
 - [ ] **Step 7: 手动冒烟验证**
 
