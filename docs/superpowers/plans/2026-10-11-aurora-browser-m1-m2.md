@@ -1646,12 +1646,14 @@ fun AuroraBottomSheet(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = AuroraRadius.l, topEnd = AuroraRadius.l))
-                .background(c.bgElevated)
                 // 吞掉面板内的点击：遮罩是全屏可点的，面板若不吃事件，点在把手或留白上
                 // 会穿透到遮罩，把面板误关掉。detectTapGestures 只消费事件、不产生语义，
                 // 因此不会给面板加上一个多余的「按钮」角色。
+                // 必须放在 .clip 之前：clip 会建立 graphics layer，而位于该 layer 内部的
+                // pointerInput 在 Robolectric 下命不中（面板收不到事件，修复失效）。
                 .pointerInput(Unit) { detectTapGestures { } }
+                .clip(RoundedCornerShape(topStart = AuroraRadius.l, topEnd = AuroraRadius.l))
+                .background(c.bgElevated)
                 .padding(bottom = AuroraSpacing.xl),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
