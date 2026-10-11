@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aurora Browser · 高保真原型</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════════════════════
+   DESIGN TOKENS  (see design-system/aurora-browser/MASTER.md)
+   ══════════════════════════════════════════════════════════════ */
+:root{
+  /* primitive */
+  --slate-950:#0B1120; --slate-900:#0F172A; --slate-850:#131C31; --slate-800:#1B2336;
+  --slate-700:#272F42; --slate-600:#334155; --slate-500:#475569; --slate-400:#64748B;
+  --slate-300:#94A3B8; --slate-200:#CBD5E1; --slate-50:#F8FAFC;
+  --sky-400:#38BDF8; --sky-500:#0EA5E9; --green-500:#22C55E; --amber-500:#F59E0B; --red-500:#EF4444;
+
+  /* semantic (dark) */
+  --color-bg:var(--slate-900);
+  --color-bg-elevated:var(--slate-850);
+  --color-surface:var(--slate-800);
+  --color-surface-hover:var(--slate-700);
+  --color-border:var(--slate-600);
+  --color-divider:rgba(148,163,184,.16);
+  --color-text:var(--slate-50);
+  --color-text-secondary:var(--slate-200);
+  --color-text-muted:var(--slate-300);
+  --color-text-disabled:var(--slate-400);
+  --color-brand:var(--sky-400);
+  --color-brand-strong:var(--sky-500);
+  --color-on-brand:var(--slate-900);
+  --color-success:var(--green-500);
+  --color-warning:var(--amber-500);
+  --color-danger:var(--red-500);
+  --color-scrim:rgba(2,6,23,.72);
+  --color-glass:rgba(19,28,49,.72);
+  --color-glass-border:rgba(148,163,184,.14);
+
+  /* space */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:24px; --space-6:32px; --space-7:48px;
+  /* radius */
+  --radius-xs:6px; --radius-sm:10px; --radius-md:14px; --radius-lg:20px;
+  --radius-xl:28px; --radius-full:999px;
+  /* elevation */
+  --shadow-1:0 1px 2px rgba(0,0,0,.40);
+  --shadow-2:0 4px 12px rgba(0,0,0,.45);
+  --shadow-3:0 12px 32px rgba(0,0,0,.50);
+  /* motion */
+  --dur-fast:120ms; --dur-base:200ms; --dur-slow:320ms;
+  --ease-standard:cubic-bezier(.2,0,0,1);
+  --ease-decelerate:cubic-bezier(0,0,0,1);
+  --ease-accelerate:cubic-bezier(.3,0,1,1);
+  /* type */
+  --font-ui:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:#070b14;
+  background-image:
+    radial-gradient(1200px 600px at 12% -8%, rgba(56,189,248,.07), transparent 60%),
+    radial-gradient(900px 500px at 88% 4%, rgba(34,197,94,.05), transparent 60%),
+    linear-gradient(rgba(148,163,184,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148,163,184,.035) 1px, transparent 1px);
+  background-size:auto,auto,32px 32px,32px 32px;
+  color:var(--color-text);
+  font-family:var(--font-ui);
+  font-size:15px; line-height:22px;
+  padding:40px 32px 96px;
+}
+
+/* ── board header ─────────────────────────────────────────── */
+.board-head{max-width:1440px;margin:0 auto 40px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:500;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--color-brand);
+  border:1px solid var(--color-glass-border);background:rgba(56,189,248,.07);
+  padding:6px 12px;border-radius:var(--radius-full);margin-bottom:18px}
+.board-head h1{font-size:38px;line-height:46px;font-weight:700;letter-spacing:-.02em;margin-bottom:12px}
+.board-head h1 span{color:var(--color-brand)}
+.board-head p{color:var(--color-text-muted);max-width:760px;font-size:15px;line-height:24px}
+.meta-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+.chip{font-size:12px;font-weight:500;color:var(--color-text-secondary);
+  border:1px solid var(--color-divider);background:var(--color-bg-elevated);
+  padding:6px 12px;border-radius:var(--radius-full)}
+.chip b{color:var(--color-text);font-weight:600}
+
+/* ── token strip ──────────────────────────────────────────── */
+.tokens{max-width:1440px;margin:0 auto 48px;border:1px solid var(--color-divider);
+  background:linear-gradient(180deg,var(--color-bg-elevated),rgba(19,28,49,.55));
+  border-radius:var(--radius-lg);padding:24px 28px}
+.tokens h2{font-size:13px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--color-text-muted);margin-bottom:18px}
+.token-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:26px 32px}
+.token-block h3{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--color-brand);margin-bottom:10px}
+.swatches{display:flex;flex-wrap:wrap;gap:6px}
+.sw{width:34px;height:34px;border-radius:var(--radius-sm);border:1px solid rgba(255,255,255,.10);position:relative}
+.sw[data-hex]::after{content:attr(data-hex);position:absolute;inset:auto 0 -17px 0;font-size:9px;
+  font-family:var(--font-mono);color:var(--color-text-disabled);text-align:center}
+.type-scale li{list-style:none;margin-bottom:5px;color:var(--color-text-secondary)}
+.rule-list li{list-style:none;font-size:12px;color:var(--color-text-muted);margin-bottom:6px;
+  padding-left:14px;position:relative}
+.rule-list li::before{content:'';position:absolute;left:0;top:8px;width:5px;height:5px;
+  border-radius:2px;background:var(--color-brand)}
+
+/* ── board / phones ───────────────────────────────────────── */
+.board{display:flex;flex-wrap:wrap;gap:56px 44px;justify-content:center;max-width:1600px;margin:0 auto}
+.frame-wrap{width:412px}
+.frame-cap{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.frame-cap .n{font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--color-brand);
+  border:1px solid var(--color-glass-border);background:rgba(56,189,248,.07);
+  padding:2px 8px;border-radius:var(--radius-xs)}
+.frame-cap .t{font-size:15px;font-weight:600}
+.frame-cap .d{font-size:12px;color:var(--color-text-disabled);margin-left:auto;text-align:right;max-width:190px;line-height:15px}
+
+.phone{
+  width:412px;height:915px;border-radius:46px;overflow:hidden;position:relative;
+  background:var(--color-bg);
+  border:9px solid #161b28;
+  box-shadow:0 0 0 1px rgba(148,163,184,.14), var(--shadow-3), 0 40px 80px -20px rgba(0,0,0,.8);
+  display:flex;flex-direction:column;
+}
+.phone.incognito{background:var(--slate-950)}
+
+/* status bar */
+.statusbar{height:34px;flex:0 0 34px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 22px;font-size:12px;font-weight:600;color:var(--color-text-secondary);z-index:40;position:relative}
+.sb-right{display:flex;align-items:center;gap:5px;color:var(--color-text-secondary)}
+.sb-right svg{display:block}
+.screen{flex:1 1 auto;position:relative;display:flex;flex-direction:column;overflow:hidden}
+/* gesture bar */
+.gesturebar{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);
+  width:130px;height:4px;border-radius:2px;background:rgba(148,163,184,.45);z-index:100}
+
+/* ── omnibox ──────────────────────────────────────────────── */
+.topbar{flex:0 0 auto;padding:6px 12px 10px;display:flex;align-items:center;gap:8px}
+.omnibox{flex:1 1 auto;height:44px;border-radius:var(--radius-full);
+  background:var(--color-surface-hover);display:flex;align-items:center;gap:10px;padding:0 8px 0 14px;
+  border:1px solid transparent}
+.omnibox .url{flex:1 1 auto;font-family:var(--font-mono);font-size:13px;color:var(--color-text-secondary);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.omnibox .ph{flex:1 1 auto;font-size:14px;color:var(--color-text-disabled)}
+.ib-btn{width:36px;height:36px;flex:0 0 36px;border-radius:var(--radius-full);display:grid;place-items:center;
+  color:var(--color-text-muted);background:transparent;border:0;cursor:pointer}
+.ib-btn:active{background:var(--color-surface);color:var(--color-text)}
+.site-id{width:26px;height:26px;flex:0 0 26px;border-radius:var(--radius-full);display:grid;place-items:center;
+  background:rgba(34,197,94,.14);color:var(--color-success)}
+.site-id.warn{background:rgba(245,158,11,.16);color:var(--color-warning)}
+
+/* progress */
+.progress{height:2px;flex:0 0 2px;background:transparent;position:relative;overflow:hidden}
+.progress i{position:absolute;left:0;top:0;bottom:0;background:var(--color-brand);border-radius:2px}
+
+/* ── content scroll areas ─────────────────────────────────── */
+.content{flex:1 1 auto;overflow:hidden;position:relative}
+.pad{padding:0 16px}
+.sec-title{display:flex;align-items:center;justify-content:space-between;margin:18px 0 10px}
+.sec-title h2{font-size:13px;font-weight:600;letter-spacing:.04em;color:var(--color-text-muted);text-transform:uppercase}
+.sec-title a{font-size:12px;color:var(--color-brand);text-decoration:none;font-weight:500}
+
+/* shortcuts */
+.shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 8px}
+.sc{display:flex;flex-direction:column;align-items:center;gap:7px;cursor:pointer}
+.sc .tile{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;
+  font-size:19px;font-weight:700;color:#fff;box-shadow:var(--shadow-1)}
+.sc span{font-size:11px;color:var(--color-text-muted);max-width:72px;text-align:center;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc.add .tile{background:var(--color-surface);border:1px dashed var(--color-border);color:var(--color-text-muted)}
+
+/* feed */
+.feed{display:flex;flex-direction:column;gap:12px}
+.fcard{display:flex;gap:12px;background:var(--color-surface);border:1px solid var(--color-divider);
+  border-radius:var(--radius-md);padding:12px;cursor:pointer;box-shadow:var(--shadow-1)}
+.fcard .thumb{width:88px;height:66px;flex:0 0 88px;border-radius:var(--radius-sm);
+  background:linear-gradient(135deg,#1e3a5f,#0f172a);position:relative;overflow:hidden}
+.fcard .thumb::after{content:'';position:absolute;inset:0;
+  background:radial-gradient(60% 60% at 70% 20%, rgba(56,189,248,.5), transparent 70%)}
+.fcard .body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}
+.fcard h3{font-size:14px;line-height:20px;font-weight:600;color:var(--color-text);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.fcard .meta{font-size:11px;color:var(--color-text-disabled);margin-top:auto;display:flex;gap:8px;align-items:center}
+.tagpill{font-size:10px;font-weight:600;padding:1px 7px;border-radius:var(--radius-full);
+  background:rgba(56,189,248,.12);color:var(--color-brand)}
+
+/* ── floating bottom toolbar ──────────────────────────────── */
+.toolbar-wrap{position:absolute;left:0;right:0;bottom:0;padding:0 20px 22px;
+  display:flex;justify-content:center;z-index:50;pointer-events:none}
+.toolbar{pointer-events:auto;display:flex;align-items:center;gap:4px;height:58px;padding:0 8px;
+  border-radius:var(--radius-full);
+  background:var(--color-glass);
+  -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+  border:1px solid var(--color-glass-border);
+  box-shadow:var(--shadow-2)}
+.toolbar.inc{border-color:rgba(56,189,248,.34);background:rgba(11,17,32,.82)}
+.tb{width:48px;height:46px;border-radius:var(--radius-full);display:grid;place-items:center;
+  color:var(--color-text-secondary);background:transparent;border:0;cursor:pointer;position:relative}
+.tb:active{background:var(--color-surface-hover)}
+.tb.on{color:var(--color-brand)}
+.tb.dis{color:var(--color-text-disabled)}
+.tb .num{min-width:24px;height:24px;padding:0 6px;border-radius:7px;border:1.6px solid currentColor;
+  display:grid;place-items:center;font-family:var(--font-mono);font-size:11px;font-weight:600;line-height:1}
+.tb .dotbadge{position:absolute;top:8px;right:9px;width:7px;height:7px;border-radius:50%;
+  background:var(--color-brand);border:1.5px solid var(--color-bg-elevated)}
+
+/* ── omnibox focused screen ───────────────────────────────── */
+.omni-input{display:flex;align-items:center;gap:8px;height:48px;border-radius:var(--radius-md);
+  background:var(--color-surface);border:1.5px solid var(--color-brand);padding:0 10px 0 14px}
+.omni-input .txt{font-size:15px;color:var(--color-text)}
+.caret{display:inline-block;width:1.5px;height:18px;background:var(--color-brand);vertical-align:-3px;
+  margin-left:1px;animation:blink 1.05s steps(1) infinite}
+@keyframes blink{0%,50%{opacity:1}50.01%,100%{opacity:0}}
+.sug{margin-top:8px;background:var(--color-surface);border:1px solid var(--color-divider);
+  border-radius:var(--radius-md);overflow:hidden}
+.sug-row{display:flex;align-items:center;gap:12px;padding:0 14px;height:50px;cursor:pointer;
+  border-bottom:1px solid var(--color-divider)}
+.sug-row:last-child{border-bottom:0}
+.sug-row.sel{background:rgba(56,189,248,.10)}
+.sug-row .ic-w{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;color:var(--color-text-muted)}
+.sug-row.sel .ic-w{color:var(--color-brand)}
+.sug-row .main{flex:1 1 auto;min-width:0}
+.sug-row .main b{font-size:14px;font-weight:500;color:var(--color-text)}
+.sug-row .main b em{font-style:normal;color:var(--color-brand);font-weight:600}
+.sug-row .main .sub{font-size:11px;color:var(--color-text-disabled);font-family:var(--font-mono);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sug-row .go{color:var(--color-text-disabled)}
+.quick-actions{display:flex;gap:8px;margin-top:14px;padding-bottom:6px}
+.qa{flex:1 1 0;display:flex;flex-direction:column;align-items:center;gap:7px;padding:12px 4px;
+  background:var(--color-bg-elevated);border:1px solid var(--color-divider);border-radius:var(--radius-md);
+  color:var(--color-text-secondary);cursor:pointer}
+.qa span{font-size:11px;font-weight:500;white-space:nowrap}
+.qa .ic{color:var(--color-brand)}
+
+/* keyboard */
+.keyboard{flex:0 0 auto;background:var(--color-bg-elevated);border-top:1px solid var(--color-divider);
+  padding:8px 6px 10px}
+.kb-row{display:flex;justify-content:center;gap:5px;margin-bottom:6px}
+.key{flex:1 1 0;max-width:36px;height:40px;border-radius:7px;background:var(--color-surface);
+  display:grid;place-items:center;font-size:14px;color:var(--color-text-secondary);
+  box-shadow:0 1px 0 rgba(0,0,0,.35)}
+.key.wide{max-width:56px;flex:1.6 1 0}
+.key.space{max-width:none;flex:5 1 0;font-size:11px;color:var(--color-text-disabled)}
+.key.fn{background:var(--color-surface-hover);color:var(--color-text-muted)}
+
+/* ── web page ─────────────────────────────────────────────── */
+.page{background:#0d1424;min-height:100%;padding-bottom:110px}
+.page-hero{height:132px;background:linear-gradient(120deg,#123047,#0d1424 70%);position:relative;overflow:hidden}
+.page-hero::after{content:'';position:absolute;inset:0;
+  background:radial-gradient(50% 90% at 78% 30%, rgba(56,189,248,.35), transparent 70%)}
+.page-hero .brand{position:absolute;left:20px;bottom:16px;font-size:13px;font-weight:700;
+  letter-spacing:.06em;color:var(--color-text);display:flex;align-items:center;gap:8px}
+.page-body{padding:20px}
+.page-body h1{font-size:25px;line-height:33px;font-weight:700;letter-spacing:-.01em;margin-bottom:10px}
+.page-body .byline{font-size:12px;color:var(--color-text-disabled);display:flex;gap:10px;margin-bottom:18px}
+.page-body p{font-size:14.5px;line-height:24px;color:var(--color-text-secondary);margin-bottom:14px}
+.page-body h2{font-size:17px;font-weight:600;margin:22px 0 10px}
+.codeblock{background:#080d18;border:1px solid var(--color-divider);border-radius:var(--radius-sm);
+  padding:14px;font-family:var(--font-mono);font-size:12px;line-height:20px;color:#a5d6ff;
+  overflow:hidden;margin-bottom:14px}
+.codeblock .k{color:#c792ea}.codeblock .s{color:#a5e844}.codeblock .c{color:#5b6b8c}
+.inline-img{height:150px;border-radius:var(--radius-sm);margin-bottom:16px;
+  background:linear-gradient(135deg,#1b2c46,#101a2e);border:1px solid var(--color-divider);
+  position:relative;overflow:hidden}
+.inline-img::after{content:'';position:absolute;inset:0;
+  background:radial-gradient(45% 70% at 30% 70%, rgba(34,197,94,.28), transparent 70%),
+             radial-gradient(45% 70% at 78% 22%, rgba(56,189,248,.3), transparent 70%)}
+
+/* ── tabs ─────────────────────────────────────────────────── */
+.tab-head{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:10px 16px 12px}
+.tab-head .count{font-size:19px;font-weight:700}
+.tab-head .count small{font-size:12px;font-weight:500;color:var(--color-text-muted);margin-left:6px}
+.seg{display:flex;background:var(--color-bg-elevated);border:1px solid var(--color-divider);
+  border-radius:var(--radius-full);padding:3px;gap:2px}
+.seg button{border:0;background:transparent;color:var(--color-text-muted);font-family:var(--font-ui);
+  font-size:12px;font-weight:500;padding:5px 12px;border-radius:var(--radius-full);cursor:pointer}
+.seg button.on{background:var(--color-surface);color:var(--color-text);box-shadow:var(--shadow-1)}
+.tab-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 16px 140px}
+.tabcard{background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);
+  overflow:hidden;cursor:pointer;box-shadow:var(--shadow-1)}
+.tabcard .prev{height:96px;position:relative;background:linear-gradient(160deg,#16233a,#0e1626)}
+.tabcard .prev .glow{position:absolute;inset:0;
+  background:radial-gradient(60% 60% at 30% 25%, rgba(56,189,248,.28), transparent 70%)}
+.tabcard .prev .fav{position:absolute;left:8px;top:8px;width:20px;height:20px;border-radius:6px;
+  display:grid;place-items:center;font-size:11px;font-weight:700;color:#fff}
+.tabcard .prev .cl{position:absolute;right:6px;top:6px;width:26px;height:26px;border-radius:50%;
+  background:rgba(2,6,23,.6);display:grid;place-items:center;color:var(--color-text-secondary)}
+.tabcard .cap{padding:9px 10px;display:flex;align-items:center;gap:8px}
+.tabcard .cap .tt{font-size:12px;line-height:16px;color:var(--color-text-secondary);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tabcard.active{border-color:var(--color-brand);box-shadow:0 0 0 1px var(--color-brand)}
+.tabcard.inc .prev{background:linear-gradient(160deg,#101828,#05070d)}
+.tabcard.inc .prev .glow{background:radial-gradient(60% 60% at 30% 25%, rgba(148,163,184,.16), transparent 70%)}
+
+.group-head{display:flex;align-items:center;gap:10px;padding:12px 16px;margin-top:4px}
+.group-head .swatch{width:10px;height:10px;border-radius:3px;background:var(--color-brand)}
+.group-head h3{font-size:13px;font-weight:600}
+.group-head .c{font-size:11px;color:var(--color-text-disabled);font-family:var(--font-mono)}
+.group-head .sp{flex:1 1 auto}
+.tabrow{display:flex;align-items:center;gap:12px;padding:0 16px;height:60px;cursor:pointer;
+  border-bottom:1px solid var(--color-divider)}
+.tabrow .fav{width:28px;height:28px;flex:0 0 28px;border-radius:8px;display:grid;place-items:center;
+  font-size:12px;font-weight:700;color:#fff}
+.tabrow .main{flex:1 1 auto;min-width:0}
+.tabrow .main .tt{font-size:13.5px;color:var(--color-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tabrow .main .dm{font-size:11px;color:var(--color-text-disabled);font-family:var(--font-mono)}
+.tabrow .cl{width:32px;height:32px;display:grid;place-items:center;color:var(--color-text-disabled)}
+
+/* ── bottom sheet ─────────────────────────────────────────── */
+.sheet-scrim{position:absolute;inset:0;background:var(--color-scrim);z-index:70}
+.sheet{position:absolute;left:0;right:0;bottom:0;z-index:80;background:var(--color-bg-elevated);
+  border-radius:var(--radius-lg) var(--radius-lg) 0 0;border-top:1px solid var(--color-divider);
+  box-shadow:var(--shadow-3);padding:8px 16px 26px}
+.handle{width:34px;height:4px;border-radius:2px;background:var(--color-border);margin:6px auto 14px}
+.sheet h2{font-size:13px;font-weight:600;color:var(--color-text-muted);letter-spacing:.04em;
+  text-transform:uppercase;margin-bottom:12px}
+.action-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 6px;margin-bottom:16px}
+.act{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 4px;border-radius:var(--radius-md);
+  background:var(--color-surface);border:1px solid var(--color-divider);cursor:pointer;color:var(--color-text-secondary)}
+.act .ic{color:var(--color-brand)}
+.act span{font-size:11px;font-weight:500;white-space:nowrap}
+.act.off{opacity:.42;pointer-events:none}
+.sheet-rows{border-top:1px solid var(--color-divider);padding-top:4px}
+.srow{display:flex;align-items:center;gap:12px;height:52px;cursor:pointer}
+.srow .ic{color:var(--color-text-muted);width:22px;display:grid;place-items:center}
+.srow .lb{flex:1 1 auto;font-size:14px;color:var(--color-text)}
+.srow .vl{font-size:12px;color:var(--color-text-disabled)}
+.switch{width:44px;height:26px;border-radius:var(--radius-full);background:var(--color-surface-hover);
+  border:1px solid var(--color-border);position:relative;flex:0 0 44px}
+.switch i{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;
+  background:var(--color-text-muted);transition:transform var(--dur-base) var(--ease-standard)}
+.switch.on{background:var(--color-brand);border-color:var(--color-brand)}
+.switch.on i{transform:translateX(18px);background:var(--color-on-brand)}
+
+/* ── generic panel screen ─────────────────────────────────── */
+.panel-head{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:8px 14px 14px}
+.panel-head .bk{width:42px;height:42px;border-radius:var(--radius-full);display:grid;place-items:center;
+  color:var(--color-text-secondary);cursor:pointer}
+.panel-head .bk:active{background:var(--color-surface)}
+.panel-head h1{font-size:19px;font-weight:600;flex:1 1 auto}
+.panel-head .r{color:var(--color-text-muted);display:flex;gap:4px}
+
+.block-counter{margin:6px 16px 18px;padding:22px;border-radius:var(--radius-lg);
+  background:linear-gradient(150deg,rgba(34,197,94,.14),rgba(19,28,49,.6));
+  border:1px solid rgba(34,197,94,.26);display:flex;align-items:center;gap:18px}
+.block-counter .shield{width:56px;height:56px;flex:0 0 56px;border-radius:var(--radius-md);
+  display:grid;place-items:center;background:rgba(34,197,94,.18);color:var(--color-success)}
+.block-counter .num{font-family:var(--font-mono);font-size:32px;font-weight:700;line-height:1;
+  color:var(--color-text);letter-spacing:-.02em}
+.block-counter .lb{font-size:12px;color:var(--color-text-muted);margin-top:6px}
+
+.list-card{margin:0 16px 16px;background:var(--color-surface);border:1px solid var(--color-divider);
+  border-radius:var(--radius-md);overflow:hidden}
+.lrow{display:flex;align-items:center;gap:12px;padding:0 14px;height:54px;
+  border-bottom:1px solid var(--color-divider)}
+.lrow:last-child{border-bottom:0}
+.lrow .ic{width:22px;display:grid;place-items:center;color:var(--color-text-muted)}
+.lrow .lb{flex:1 1 auto;font-size:14px;color:var(--color-text)}
+.lrow .lb small{display:block;font-size:11px;color:var(--color-text-disabled);font-family:var(--font-mono)}
+.lrow .vl{font-family:var(--font-mono);font-size:13px;color:var(--color-text-secondary)}
+.lrow .go{color:var(--color-text-disabled)}
+.bar{height:6px;border-radius:3px;background:var(--color-surface-hover);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;border-radius:3px}
+.grp-title{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--color-text-disabled);padding:16px 22px 8px}
+
+/* reader */
+.reader-head{padding:6px 20px 10px;display:flex;align-items:center;gap:10px;
+  border-bottom:1px solid var(--color-divider)}
+.reader-head .dm{font-family:var(--font-mono);font-size:12px;color:var(--color-text-muted)}
+.reader-body{padding:20px;overflow:hidden;flex:1 1 auto}
+.reader-body h1{font-size:26px;line-height:35px;font-weight:700;letter-spacing:-.015em;margin-bottom:12px}
+.reader-body .byline{font-size:12px;color:var(--color-text-disabled);display:flex;gap:10px;margin-bottom:22px;
+  padding-bottom:18px;border-bottom:1px solid var(--color-divider)}
+.reader-body p{font-size:16.5px;line-height:30px;color:var(--color-text-secondary);margin-bottom:18px}
+.reader-body p:first-of-type::first-letter{font-size:44px;line-height:38px;font-weight:700;color:var(--color-brand);
+  float:left;padding:6px 10px 0 0}
+.reader-bar{flex:0 0 auto;margin:0 12px 20px;border-radius:var(--radius-lg);
+  background:var(--color-glass);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+  border:1px solid var(--color-glass-border);box-shadow:var(--shadow-2);padding:10px 12px;
+  display:flex;align-items:center;gap:10px}
+.rbtn{height:42px;min-width:42px;padding:0 12px;border-radius:var(--radius-sm);display:flex;align-items:center;
+  gap:6px;justify-content:center;background:var(--color-surface);border:1px solid var(--color-divider);
+  color:var(--color-text-secondary);font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font-ui)}
+.rbtn .sz{font-family:var(--font-mono);font-size:11px;color:var(--color-text-muted)}
+.spacer{flex:1 1 auto}
+
+/* downloads */
+.dl-row{display:flex;align-items:center;gap:13px;padding:12px 16px;border-bottom:1px solid var(--color-divider)}
+.dl-row .fic{width:40px;height:40px;flex:0 0 40px;border-radius:var(--radius-sm);display:grid;place-items:center;
+  background:var(--color-surface-hover);color:var(--color-text-muted)}
+.dl-row .main{flex:1 1 auto;min-width:0}
+.dl-row .main .tt{font-size:13.5px;color:var(--color-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dl-row .main .sub{font-size:11px;color:var(--color-text-disabled);font-family:var(--font-mono);margin-top:3px;
+  display:flex;justify-content:space-between}
+.dl-row .act2{width:36px;height:36px;display:grid;place-items:center;color:var(--color-text-muted)}
+
+/* search field */
+.searchf{margin:0 16px 12px;height:42px;border-radius:var(--radius-sm);background:var(--color-surface);
+  border:1px solid var(--color-divider);display:flex;align-items:center;gap:10px;padding:0 12px;
+  color:var(--color-text-disabled);font-size:13px}
+
+/* empty state */
+.empty{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;padding:40px;text-align:center}
+.empty .cir{width:76px;height:76px;border-radius:50%;display:grid;place-items:center;
+  background:var(--color-surface);border:1px solid var(--color-divider);color:var(--color-text-disabled)}
+.empty h3{font-size:16px;font-weight:600}
+.empty p{font-size:13px;color:var(--color-text-muted);max-width:250px;line-height:20px}
+.btn{height:44px;padding:0 22px;border-radius:var(--radius-full);border:0;cursor:pointer;
+  font-family:var(--font-ui);font-size:14px;font-weight:600;background:var(--color-brand);color:var(--color-on-brand)}
+.btn.ghost{background:transparent;border:1px solid var(--color-border);color:var(--color-text-secondary)}
+
+/* incognito */
+.inc-banner{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:18px;padding:0 40px;text-align:center}
+.inc-banner .cir{width:88px;height:88px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(148,163,184,.10);border:1px solid rgba(148,163,184,.22);color:var(--color-text-secondary)}
+.inc-banner h1{font-size:28px;font-weight:700;letter-spacing:-.02em}
+.inc-banner ul{list-style:none;display:flex;flex-direction:column;gap:12px;text-align:left;margin-top:4px}
+.inc-banner li{display:flex;gap:12px;align-items:flex-start;font-size:13px;line-height:19px;
+  color:var(--color-text-muted)}
+.inc-banner li .ic{color:var(--color-text-disabled);margin-top:1px;flex:0 0 20px}
+
+/* settings */
+.stg-group{margin:0 16px 14px;background:var(--color-surface);border:1px solid var(--color-divider);
+  border-radius:var(--radius-md);overflow:hidden}
+.stg-h{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--color-brand);padding:18px 22px 8px}
+
+/* footnote */
+.foot{max-width:1440px;margin:64px auto 0;padding-top:28px;border-top:1px solid var(--color-divider);
+  color:var(--color-text-disabled);font-size:12.5px;line-height:21px}
+.foot b{color:var(--color-text-muted)}
+.foot code{font-family:var(--font-mono);font-size:11.5px;color:var(--color-brand)}
+</style>
+</head>
+<body>
+
+<!-- ══════════════ HEADER ══════════════ -->
+<header class="board-head">
+  <div class="eyebrow">Android · Kotlin + Jetpack Compose</div>
+  <h1>Aurora Browser <span>极光浏览器</span></h1>
+  <p>全能功能型安卓浏览器 · 深色优先的现代简约界面。所有高频操作落在屏幕底部拇指区，能力收进面板与二级页，默认界面只保留一个地址栏与一条悬浮工具栏。</p>
+  <div class="meta-row">
+    <div class="chip">定位 <b>全能功能型</b></div>
+    <div class="chip">主题 <b>深色优先</b></div>
+    <div class="chip">风格 <b>Dark Mode (OLED)</b></div>
+    <div class="chip">字体 <b>Inter + JetBrains Mono</b></div>
+    <div class="chip">图标 <b>Phosphor</b></div>
+    <div class="chip">基准 <b>412 × 915 dp</b></div>
+    <div class="chip">触摸目标 <b>≥ 48dp</b></div>
+  </div>
+</header>
+
+<!-- ══════════════ TOKENS ══════════════ -->
+<section class="tokens">
+  <h2>Design Tokens</h2>
+  <div class="token-grid">
+    <div class="token-block">
+      <h3>Surface</h3>
+      <div class="swatches">
+        <div class="sw" style="background:#0F172A" data-hex="bg"></div>
+        <div class="sw" style="background:#131C31" data-hex="elev"></div>
+        <div class="sw" style="background:#1B2336" data-hex="surf"></div>
+        <div class="sw" style="background:#272F42" data-hex="hovr"></div>
+        <div class="sw" style="background:#334155" data-hex="brdr"></div>
+      </div>
+    </div>
+    <div class="token-block">
+      <h3>Semantic</h3>
+      <div class="swatches">
+        <div class="sw" style="background:#38BDF8" data-hex="brand"></div>
+        <div class="sw" style="background:#22C55E" data-hex="ok"></div>
+        <div class="sw" style="background:#F59E0B" data-hex="warn"></div>
+        <div class="sw" style="background:#EF4444" data-hex="danger"></div>
+        <div class="sw" style="background:#94A3B8" data-hex="muted"></div>
+      </div>
+    </div>
+    <div class="token-block">
+      <h3>Type scale</h3>
+      <ul class="type-scale">
+        <li style="font-size:20px;font-weight:700">Title 20/26</li>
+        <li style="font-size:15px;font-weight:400">Body 15/22</li>
+        <li style="font-size:13px;font-weight:500">Label 13/18</li>
+        <li style="font-size:14px;font-family:var(--font-mono)">Mono 14/20</li>
+      </ul>
+    </div>
+    <div class="token-block">
+      <h3>Rules</h3>
+      <ul class="rule-list">
+        <li>4 / 8dp 间距节奏</li>
+        <li>圆角 6 · 10 · 14 · 20 · 999</li>
+        <li>按压态不改布局尺寸</li>
+        <li>正文对比 ≥ 4.5:1（实测 7.0–17.1）</li>
+        <li>尊重「移除动画」</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ BOARD ══════════════ -->
+<main class="board">
+
+<!-- ───────────── 01 主页 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">01</span><span class="t">主页 / 新标签页</span>
+    <span class="d">启动落脚点，3 秒内可搜索或进站</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="topbar">
+        <div class="omnibox">
+          <span data-i="magnifying-glass" data-s="18"></span>
+          <span class="ph">搜索或输入网址</span>
+          <button class="ib-btn" aria-label="语音搜索" data-i="microphone" data-s="19"></button>
+          <button class="ib-btn" aria-label="扫描二维码" data-i="qr-code" data-s="19"></button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="pad">
+          <div class="sec-title"><h2>快捷入口</h2><a>编辑</a></div>
+          <div class="shortcuts">
+            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#1772f6,#0b4fd1)">知</div><span>知乎</span></div>
+            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#fb7299,#e34a75)">B</div><span>哔哩哔哩</span></div>
+            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#f5c518,#e0a800)">微</div><span>微博</span></div>
+            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#3a4a5e,#1e2733)">G</div><span>GitHub</span></div>
+            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#1e80ff,#0a5bd3)">掘</div><span>掘金</span></div>
+            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#ff5000,#d63f00)">淘</div><span>淘宝</span></div>
+            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#ff0033,#c00)">Y</div><span>YouTube</span></div>
+            <div class="sc add"><div class="tile"><span data-i="plus" data-s="22"></span></div><span>添加</span></div>
+          </div>
+
+          <div class="sec-title"><h2>为你推荐</h2><a>管理</a></div>
+          <div class="feed">
+            <article class="fcard">
+              <div class="thumb"></div>
+              <div class="body">
+                <h3>Compose 1.11 稳定版发布：延迟布局与共享元素转场</h3>
+                <div class="meta"><span class="tagpill">技术</span><span>Android Weekly</span><span>· 2 小时前</span></div>
+              </div>
+            </article>
+            <article class="fcard">
+              <div class="thumb" style="background:linear-gradient(135deg,#3b2f5e,#160f2b)"></div>
+              <div class="body">
+                <h3>为什么现代浏览器都在重做标签管理？</h3>
+                <div class="meta"><span class="tagpill">产品</span><span>少数派</span><span>· 5 小时前</span></div>
+              </div>
+            </article>
+            <article class="fcard">
+              <div class="thumb" style="background:linear-gradient(135deg,#1e4a3a,#0a1f18)"></div>
+              <div class="body">
+                <h3>一次点击背后：追踪器拦截的技术原理拆解</h3>
+                <div class="meta"><span class="tagpill">隐私</span><span>InfoQ</span><span>· 昨天</span></div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+      <div class="toolbar-wrap">
+        <div class="toolbar">
+          <button class="tb dis" aria-label="后退" data-i="arrow-left" data-s="22"></button>
+          <button class="tb dis" aria-label="前进" data-i="arrow-right" data-s="22"></button>
+          <button class="tb on" aria-label="主页" data-i="house-simple" data-s="22"></button>
+          <button class="tb" aria-label="标签页，3 个"><span class="num">3</span></button>
+          <button class="tb" aria-label="更多" data-i="dots-three" data-s="24" style="transform:rotate(90deg)"></button>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 02 Omnibox ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">02</span><span class="t">地址栏聚焦</span>
+    <span class="d">建议 + 快捷动作，键盘弹出时仍可单手操作</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="topbar">
+        <div class="omni-input">
+          <span data-i="magnifying-glass" data-s="18" style="color:var(--color-brand)"></span>
+          <span class="txt">compose <span class="caret"></span></span>
+          <span class="spacer"></span>
+          <button class="ib-btn" aria-label="清除" data-i="x" data-s="18"></button>
+        </div>
+      </div>
+      <div class="content pad">
+        <div class="sug">
+          <div class="sug-row sel">
+            <span class="ic-w" data-i="magnifying-glass" data-s="19"></span>
+            <div class="main"><b>compose <em>延迟布局</em></b><div class="sub">搜索建议</div></div>
+            <span class="go" data-i="arrow-right" data-s="16"></span>
+          </div>
+          <div class="sug-row">
+            <span class="ic-w" data-i="clock-counter-clockwise" data-s="19"></span>
+            <div class="main"><b>Compose 延迟布局 LazyLayout</b><div class="sub">developer.android.com</div></div>
+            <span class="go" data-i="arrow-right" data-s="16"></span>
+          </div>
+          <div class="sug-row">
+            <span class="ic-w" data-i="clock-counter-clockwise" data-s="19"></span>
+            <div class="main"><b>compose 共享元素转场</b><div class="sub">developer.android.com</div></div>
+            <span class="go" data-i="arrow-right" data-s="16"></span>
+          </div>
+          <div class="sug-row">
+            <span class="ic-w" data-i="star" data-s="19"></span>
+            <div class="main"><b>Compose 性能检查清单</b><div class="sub">书签 · 技术笔记</div></div>
+            <span class="go" data-i="arrow-right" data-s="16"></span>
+          </div>
+        </div>
+        <div class="quick-actions">
+          <div class="qa"><span class="ic" data-i="qr-code" data-s="21"></span><span>扫码</span></div>
+          <div class="qa"><span class="ic" data-i="microphone" data-s="21"></span><span>语音</span></div>
+          <div class="qa"><span class="ic" data-i="clipboard-text" data-s="21"></span><span>粘贴并前往</span></div>
+          <div class="qa"><span class="ic" data-i="eye-slash" data-s="21"></span><span>无痕</span></div>
+        </div>
+        <div class="sec-title" style="margin-top:24px"><h2>常访问</h2><a>清除</a></div>
+        <div class="sug">
+          <div class="sug-row">
+            <span class="ic-w" data-i="globe" data-s="19"></span>
+            <div class="main"><b>developer.android.com</b><div class="sub">今天 · 访问 12 次</div></div>
+            <span class="go" data-i="arrow-right" data-s="16"></span>
+          </div>
+          <div class="sug-row">
+            <span class="ic-w" data-i="globe" data-s="19"></span>
+            <div class="main"><b>juejin.cn</b><div class="sub">今天 · 访问 5 次</div></div>
+            <span class="go" data-i="arrow-right" data-s="16"></span>
+          </div>
+          <div class="sug-row">
+            <span class="ic-w" data-i="globe" data-s="19"></span>
+            <div class="main"><b>m3.material.io</b><div class="sub">昨天 · 访问 3 次</div></div>
+            <span class="go" data-i="arrow-right" data-s="16"></span>
+          </div>
+        </div>
+      </div>
+      <div class="keyboard" id="kb"></div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 03 网页浏览 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">03</span><span class="t">网页浏览</span>
+    <span class="d">顶部站点身份 + 进度条，底部悬浮玻璃工具栏</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="topbar" style="padding-bottom:8px">
+        <div class="omnibox">
+          <span class="site-id" data-i="lock-simple" data-s="14" title="连接安全"></span>
+          <span class="url">developer.android.com/develop/ui/compose</span>
+          <button class="ib-btn" aria-label="刷新" data-i="arrow-clockwise" data-s="18"></button>
+        </div>
+      </div>
+      <div class="progress"><i style="width:62%"></i></div>
+      <div class="content">
+        <div class="page">
+          <div class="page-hero">
+            <div class="brand"><span data-i="globe" data-s="18"></span> Android Developers</div>
+          </div>
+          <div class="page-body">
+            <h1>使用 Jetpack Compose 构建列表</h1>
+            <div class="byline"><span>2026-08-14</span><span>·</span><span>8 分钟阅读</span></div>
+            <p>Compose 的惰性布局只组合与布局当前可见的条目，因此即使数据量很大也能保持流畅。使用 <b style="color:var(--color-brand);font-weight:600">LazyColumn</b> 承载纵向长列表，用 <b style="color:var(--color-brand);font-weight:600">LazyVerticalGrid</b> 承载网格。</p>
+            <div class="codeblock">
+<span class="c">// 只组合可见条目</span><br>
+LazyColumn(<br>
+&nbsp;&nbsp;contentPadding = PaddingValues(<span class="k">16</span>.dp),<br>
+&nbsp;&nbsp;verticalArrangement = Arrangement.spacedBy(<span class="k">8</span>.dp)<br>
+) {<br>
+&nbsp;&nbsp;items(tabs, key = { it.id }) { tab -&gt;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;TabRow(tab)<br>
+&nbsp;&nbsp;}<br>
+}
+            </div>
+            <h2>避免嵌套滚动</h2>
+            <p>同一屏内应只保留一个滚动容器。嵌套滚动不仅会带来手势冲突，还会让测量与布局在每一帧重复发生。</p>
+            <div class="inline-img"></div>
+            <p>把业务状态放在 ViewModel，把滚动位置、动画等纯 UI 状态交给 <span style="font-family:var(--font-mono);color:#a5d6ff">remember</span>，并始终使用不可变集合以避免静默的组合失效。</p>
+          </div>
+        </div>
+      </div>
+      <div class="toolbar-wrap">
+        <div class="toolbar">
+          <button class="tb" aria-label="后退" data-i="arrow-left" data-s="22"></button>
+          <button class="tb dis" aria-label="前进" data-i="arrow-right" data-s="22"></button>
+          <button class="tb" aria-label="主页" data-i="house-simple" data-s="22"></button>
+          <button class="tb on" aria-label="标签页，3 个"><span class="num">3</span></button>
+          <button class="tb" aria-label="更多" data-i="dots-three" data-s="24" style="transform:rotate(90deg)"></button>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 04 标签管理 · 网格 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">04</span><span class="t">标签管理 · 网格</span>
+    <span class="d">预览卡片 + 一键关闭，顶部可切列表视图</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="tab-head">
+        <span class="count">8<small>个标签页</small></span>
+        <span class="spacer"></span>
+        <div class="seg"><button class="on">网格</button><button>列表</button></div>
+        <button class="ib-btn" aria-label="新建标签页" data-i="plus" data-s="20"></button>
+        <button class="ib-btn" aria-label="更多" data-i="dots-three" data-s="20"></button>
+      </div>
+      <div class="content">
+        <div class="tab-grid">
+          <div class="tabcard active">
+            <div class="prev"><div class="glow"></div><span class="fav" style="background:#1a73e8">G</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="cap"><span class="tt">使用 Jetpack Compose 构建列表</span></div>
+          </div>
+          <div class="tabcard">
+            <div class="prev"><div class="glow"></div><span class="fav" style="background:#1772f6">知</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="cap"><span class="tt">如何评价 Compose 的延迟布局</span></div>
+          </div>
+          <div class="tabcard">
+            <div class="prev" style="background:linear-gradient(160deg,#2a1f3a,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(251,114,153,.3), transparent 70%)"></div><span class="fav" style="background:#fb7299">B</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="cap"><span class="tt">Compose 共享元素转场实战</span></div>
+          </div>
+          <div class="tabcard">
+            <div class="prev" style="background:linear-gradient(160deg,#3a2f18,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(245,197,24,.28), transparent 70%)"></div><span class="fav" style="background:#f5c518">微</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="cap"><span class="tt">今日热搜：浏览器内核更新</span></div>
+          </div>
+          <div class="tabcard">
+            <div class="prev" style="background:linear-gradient(160deg,#1b3a2e,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(34,197,94,.28), transparent 70%)"></div><span class="fav" style="background:#22c55e">掘</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="cap"><span class="tt">一次点击背后：追踪器拦截原理</span></div>
+          </div>
+          <div class="tabcard inc">
+            <div class="prev"><div class="glow"></div><span class="fav" style="background:#334155"><span data-i="eye-slash" data-s="13"></span></span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="cap"><span class="tt">无痕标签页</span></div>
+          </div>
+          <div class="tabcard">
+            <div class="prev" style="background:linear-gradient(160deg,#1f2a44,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(124,58,237,.28), transparent 70%)"></div><span class="fav" style="background:#7c3aed">M</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="cap"><span class="tt">Material 3 设计令牌指南</span></div>
+          </div>
+          <div class="tabcard">
+            <div class="prev" style="background:linear-gradient(160deg,#16233a,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(14,165,233,.3), transparent 70%)"></div><span class="fav" style="background:#0ea5e9">K</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="cap"><span class="tt">Kotlin Flow 冷流与热流</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="toolbar-wrap">
+        <div class="toolbar" style="padding:0 12px">
+          <button class="tb" aria-label="关闭全部" data-i="trash-simple" data-s="21"></button>
+          <span class="spacer"></span>
+          <button class="tb" aria-label="新建标签页" data-i="plus" data-s="22" style="width:64px;background:var(--color-brand);color:var(--color-on-brand);border-radius:var(--radius-full)"></button>
+          <span class="spacer"></span>
+          <button class="tb" aria-label="更多" data-i="dots-three" data-s="24" style="transform:rotate(90deg)"></button>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 05 标签管理 · 列表 + 标签组 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">05</span><span class="t">标签管理 · 列表</span>
+    <span class="d">标签组折叠 + 最近关闭，适合几十个标签</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="tab-head">
+        <span class="count">8<small>个标签页</small></span>
+        <span class="spacer"></span>
+        <div class="seg"><button>网格</button><button class="on">列表</button></div>
+        <button class="ib-btn" aria-label="新建标签页" data-i="plus" data-s="20"></button>
+        <button class="ib-btn" aria-label="更多" data-i="dots-three" data-s="20"></button>
+      </div>
+      <div class="content">
+        <div class="group-head">
+          <span class="swatch"></span><h3>工作 · 4</h3><span class="c">组</span>
+          <span class="sp"></span>
+          <span data-i="caret-down" data-s="16" style="color:var(--color-text-muted)"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#1a73e8">G</span>
+          <div class="main"><div class="tt">使用 Jetpack Compose 构建列表</div><div class="dm">developer.android.com</div></div>
+          <span class="cl" data-i="x" data-s="16"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#1772f6">知</span>
+          <div class="main"><div class="tt">如何评价 Compose 的延迟布局</div><div class="dm">zhihu.com</div></div>
+          <span class="cl" data-i="x" data-s="16"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#1e80ff">掘</span>
+          <div class="main"><div class="tt">Compose 1.11 性能优化清单</div><div class="dm">juejin.cn</div></div>
+          <span class="cl" data-i="x" data-s="16"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#3a4a5e">G</span>
+          <div class="main"><div class="tt">androidx.compose.lazy — API 参考</div><div class="dm">github.com</div></div>
+          <span class="cl" data-i="x" data-s="16"></span>
+        </div>
+
+        <div class="grp-title">其他标签页 · 2</div>
+        <div class="tabrow">
+          <span class="fav" style="background:#fb7299">B</span>
+          <div class="main"><div class="tt">Compose 共享元素转场实战</div><div class="dm">bilibili.com</div></div>
+          <span class="cl" data-i="x" data-s="16"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#f5c518">微</span>
+          <div class="main"><div class="tt">今日热搜：浏览器内核更新</div><div class="dm">weibo.com</div></div>
+          <span class="cl" data-i="x" data-s="16"></span>
+        </div>
+
+        <div class="grp-title">最近关闭</div>
+        <div class="tabrow" style="opacity:.7">
+          <span class="fav" style="background:#334155"><span data-i="clock" data-s="15"></span></span>
+          <div class="main"><div class="tt">Material 3 设计令牌指南</div><div class="dm">m3.material.io</div></div>
+          <span class="cl" data-i="arrow-u-up-left" data-s="16"></span>
+        </div>
+      </div>
+      <div class="toolbar-wrap">
+        <div class="toolbar" style="padding:0 12px">
+          <button class="tb" aria-label="关闭全部" data-i="trash-simple" data-s="21"></button>
+          <span class="spacer"></span>
+          <button class="tb" aria-label="新建标签页" data-i="plus" data-s="22" style="width:64px;background:var(--color-brand);color:var(--color-on-brand);border-radius:var(--radius-full)"></button>
+          <span class="spacer"></span>
+          <button class="tb" aria-label="更多" data-i="dots-three" data-s="24" style="transform:rotate(90deg)"></button>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 06 主菜单面板 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">06</span><span class="t">主菜单面板</span>
+    <span class="d">底部抽屉，能力入口 4×2 网格</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="topbar" style="padding-bottom:8px">
+        <div class="omnibox">
+          <span class="site-id" data-i="lock-simple" data-s="14"></span>
+          <span class="url">developer.android.com/develop/ui/compose</span>
+          <button class="ib-btn" aria-label="刷新" data-i="arrow-clockwise" data-s="18"></button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="page"><div class="page-hero"><div class="brand"><span data-i="globe" data-s="18"></span> Android Developers</div></div>
+          <div class="page-body"><h1>使用 Jetpack Compose 构建列表</h1><p>Compose 的惰性布局只组合与布局当前可见的条目……</p></div>
+        </div>
+      </div>
+      <div class="sheet-scrim"></div>
+      <div class="sheet">
+        <div class="handle"></div>
+        <h2>常用功能</h2>
+        <div class="action-grid">
+          <div class="act"><span class="ic" data-i="bookmark-simple" data-s="22"></span><span>书签</span></div>
+          <div class="act"><span class="ic" data-i="clock-counter-clockwise" data-s="22"></span><span>历史</span></div>
+          <div class="act"><span class="ic" data-i="download-simple" data-s="22"></span><span>下载</span></div>
+          <div class="act"><span class="ic" data-i="book-open-text" data-s="22"></span><span>阅读模式</span></div>
+          <div class="act"><span class="ic" data-i="share-network" data-s="22"></span><span>分享</span></div>
+          <div class="act"><span class="ic" data-i="eye-slash" data-s="22"></span><span>无痕</span></div>
+          <div class="act"><span class="ic" data-i="puzzle-piece" data-s="22"></span><span>扩展</span></div>
+          <div class="act"><span class="ic" data-i="gear-six" data-s="22"></span><span>设置</span></div>
+        </div>
+        <div class="sheet-rows">
+          <div class="srow"><span class="ic" data-i="shield-check" data-s="20"></span><span class="lb">隐私与安全</span><span class="vl">已拦截 1,284</span><span class="go" data-i="caret-right" data-s="16" style="color:var(--color-text-disabled)"></span></div>
+          <div class="srow"><span class="ic" data-i="desktop" data-s="20"></span><span class="lb">桌面版网站</span><span class="switch"><i></i></span></div>
+          <div class="srow"><span class="ic" data-i="translate" data-s="20"></span><span class="lb">翻译此页</span><span class="vl">中文</span><span class="go" data-i="caret-right" data-s="16" style="color:var(--color-text-disabled)"></span></div>
+          <div class="srow"><span class="ic" data-i="user-circle" data-s="20"></span><span class="lb">已同步</span><span class="vl">2 分钟前</span></div>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 07 隐私与安全 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">07</span><span class="t">隐私与安全面板</span>
+    <span class="d">让拦截「看得见」，权限可逐项控制</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="panel-head">
+        <span class="bk" data-i="arrow-left" data-s="22"></span>
+        <h1>隐私与安全</h1>
+        <span class="r"><span data-i="dots-three" data-s="20"></span></span>
+      </div>
+      <div class="content">
+        <div class="block-counter">
+          <div class="shield" data-i="shield-check" data-s="30"></div>
+          <div>
+            <div class="num">1,284</div>
+            <div class="lb">本次会话已拦截的追踪器</div>
+          </div>
+        </div>
+        <div class="list-card">
+          <div class="lrow"><span class="ic" data-i="lock-simple" data-s="20" style="color:var(--color-success)"></span>
+            <span class="lb">连接安全<small>HTTPS · TLS 1.3</small></span>
+            <span class="vl" style="color:var(--color-success)">已加密</span></div>
+          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span>
+            <span class="lb">developer.android.com</span>
+            <span class="vl">已验证</span></div>
+        </div>
+        <div class="grp-title">追踪器分类</div>
+        <div class="list-card">
+          <div class="lrow"><span class="ic" data-i="crosshair-simple" data-s="20"></span>
+            <span class="lb">广告追踪<div class="bar"><i style="width:78%;background:var(--color-danger)"></i></div></span>
+            <span class="vl">642</span></div>
+          <div class="lrow"><span class="ic" data-i="fire" data-s="20"></span>
+            <span class="lb">行为分析<div class="bar"><i style="width:46%;background:var(--color-warning)"></i></div></span>
+            <span class="vl">378</span></div>
+          <div class="lrow"><span class="ic" data-i="share-network" data-s="20"></span>
+            <span class="lb">社交追踪<div class="bar"><i style="width:22%;background:var(--color-brand)"></i></div></span>
+            <span class="vl">183</span></div>
+          <div class="lrow"><span class="ic" data-i="user-list" data-s="20"></span>
+            <span class="lb">指纹识别<div class="bar"><i style="width:10%;background:var(--color-text-muted)"></i></div></span>
+            <span class="vl">81</span></div>
+        </div>
+        <div class="grp-title">站点权限</div>
+        <div class="list-card">
+          <div class="lrow"><span class="ic" data-i="image" data-s="20"></span><span class="lb">相机</span><span class="vl">询问</span><span class="switch"><i></i></span></div>
+          <div class="lrow"><span class="ic" data-i="microphone" data-s="20"></span><span class="lb">麦克风</span><span class="switch"><i></i></span></div>
+          <div class="lrow"><span class="ic" data-i="crosshair-simple" data-s="20"></span><span class="lb">位置</span><span class="switch"><i></i></span></div>
+          <div class="lrow"><span class="ic" data-i="speaker-high" data-s="20"></span><span class="lb">声音自动播放</span><span class="switch on"><i></i></span></div>
+          <div class="lrow"><span class="ic" data-i="clipboard-text" data-s="20"></span><span class="lb">剪贴板读取</span><span class="vl">已阻止</span></div>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 08 阅读模式 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">08</span><span class="t">阅读模式</span>
+    <span class="d">限宽排版 + 字号/主题/朗读控制条</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="reader-head">
+        <span class="bk" style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:var(--color-text-secondary)" data-i="arrow-left" data-s="21"></span>
+        <span data-i="book-open-text" data-s="18" style="color:var(--color-brand)"></span>
+        <span class="dm">developer.android.com</span>
+        <span class="spacer"></span>
+        <span data-i="share-network" data-s="20" style="color:var(--color-text-muted)"></span>
+      </div>
+      <div class="reader-body">
+        <h1>使用 Jetpack Compose 构建列表</h1>
+        <div class="byline"><span>Android Developers</span><span>·</span><span>8 分钟阅读</span><span>·</span><span>已优化</span></div>
+        <p>Compose 的惰性布局只组合与布局当前可见的条目，因此即使数据量很大也能保持流畅。把长列表交给 LazyColumn，把网格交给 LazyVerticalGrid，你就不需要再手动管理复用池。</p>
+        <p>同一屏内应只保留一个滚动容器。嵌套滚动不仅带来手势冲突，还会让测量与布局在每一帧重复发生，这是移动端掉帧最常见的来源之一。</p>
+        <p>把业务状态放在 ViewModel，把滚动位置、动画这类纯 UI 状态交给 remember，并始终使用不可变集合，避免静默的组合失效。</p>
+      </div>
+      <div class="reader-bar">
+        <button class="rbtn" aria-label="减小字号"><span data-i="text-aa" data-s="15"></span><span data-i="minus" data-s="14"></span></button>
+        <span class="sz">16.5</span>
+        <button class="rbtn" aria-label="增大字号"><span data-i="text-aa" data-s="22"></span><span data-i="plus" data-s="14"></span></button>
+        <span class="spacer"></span>
+        <button class="rbtn"><span data-i="moon" data-s="16"></span>深色</button>
+        <button class="rbtn" aria-label="朗读" data-i="speaker-high" data-s="18"></button>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 09 下载管理 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">09</span><span class="t">下载管理</span>
+    <span class="d">进行中 / 已完成分段，支持暂停与重试</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="panel-head">
+        <span class="bk" data-i="arrow-left" data-s="22"></span>
+        <h1>下载</h1>
+        <span class="r"><span data-i="trash-simple" data-s="20"></span></span>
+      </div>
+      <div style="padding:0 16px 14px"><div class="seg" style="display:inline-flex"><button class="on">进行中 2</button><button>已完成 14</button></div></div>
+      <div class="content">
+        <div class="dl-row">
+          <span class="fic" data-i="download-simple" data-s="20"></span>
+          <div class="main">
+            <div class="tt">compose-api-reference.pdf</div>
+            <div class="bar"><i style="width:64%;background:var(--color-brand)"></i></div>
+            <div class="sub"><span>8.4 MB / 13.1 MB</span><span>1.2 MB/s · 约 4 秒</span></div>
+          </div>
+          <span class="act2" data-i="minus" data-s="18"></span>
+        </div>
+        <div class="dl-row">
+          <span class="fic" data-i="download-simple" data-s="20"></span>
+          <div class="main">
+            <div class="tt">android-15-system-image.zip</div>
+            <div class="bar"><i style="width:23%;background:var(--color-brand)"></i></div>
+            <div class="sub"><span>312 MB / 1.36 GB</span><span>已暂停</span></div>
+          </div>
+          <span class="act2" data-i="caret-right" data-s="18"></span>
+        </div>
+        <div class="grp-title">已完成</div>
+        <div class="dl-row">
+          <span class="fic" data-i="image" data-s="20"></span>
+          <div class="main"><div class="tt">material-3-tokens.fig</div>
+            <div class="sub"><span>2.1 MB</span><span>今天 14:02</span></div></div>
+          <span class="act2" data-i="dots-three" data-s="18"></span>
+        </div>
+        <div class="dl-row">
+          <span class="fic" data-i="book-open-text" data-s="20"></span>
+          <div class="main"><div class="tt">privacy-whitepaper.pdf</div>
+            <div class="sub"><span>640 KB</span><span>昨天 21:37</span></div></div>
+          <span class="act2" data-i="dots-three" data-s="18"></span>
+        </div>
+        <div class="dl-row">
+          <span class="fic" data-i="folder-simple" data-s="20"></span>
+          <div class="main"><div class="tt">aurora-logo-pack.zip</div>
+            <div class="sub"><span>18.6 MB</span><span>10-09 09:14</span></div></div>
+          <span class="act2" data-i="dots-three" data-s="18"></span>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 10 书签与历史 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">10</span><span class="t">书签与历史</span>
+    <span class="d">分段切换 + 搜索 + 分组</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="panel-head">
+        <span class="bk" data-i="arrow-left" data-s="22"></span>
+        <h1>书签与历史</h1>
+        <span class="r"><span data-i="dots-three" data-s="20"></span></span>
+      </div>
+      <div style="padding:0 16px 14px"><div class="seg" style="display:inline-flex"><button class="on">书签</button><button>历史</button></div></div>
+      <div class="searchf"><span data-i="magnifying-glass" data-s="17"></span>搜索书签</div>
+      <div class="content">
+        <div class="grp-title">书签栏 · 4</div>
+        <div class="tabrow">
+          <span class="fav" style="background:#1a73e8">G</span>
+          <div class="main"><div class="tt">Compose 惰性布局文档</div><div class="dm">developer.android.com</div></div>
+          <span class="cl" data-i="dots-three" data-s="16"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#1772f6">知</span>
+          <div class="main"><div class="tt">Compose 性能优化清单</div><div class="dm">zhihu.com</div></div>
+          <span class="cl" data-i="dots-three" data-s="16"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#3a4a5e">M</span>
+          <div class="main"><div class="tt">Material 3 设计令牌</div><div class="dm">m3.material.io</div></div>
+          <span class="cl" data-i="dots-three" data-s="16"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#1b3a2e">W</span>
+          <div class="main"><div class="tt">WebView 与边缘手势冲突处理</div><div class="dm">developer.chrome.com</div></div>
+          <span class="cl" data-i="dots-three" data-s="16"></span>
+        </div>
+        <div class="grp-title">技术笔记 · 3</div>
+        <div class="tabrow">
+          <span class="fav" style="background:#22c55e">K</span>
+          <div class="main"><div class="tt">Kotlin Flow 冷流与热流</div><div class="dm">kotlinlang.org</div></div>
+          <span class="cl" data-i="dots-three" data-s="16"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#7c3aed">A</span>
+          <div class="main"><div class="tt">Android 15 行为变更</div><div class="dm">developer.android.com</div></div>
+          <span class="cl" data-i="dots-three" data-s="16"></span>
+        </div>
+        <div class="tabrow">
+          <span class="fav" style="background:#0ea5e9">R</span>
+          <div class="main"><div class="tt">R8 混淆与裁剪规则速查</div><div class="dm">r8.googlesource.com</div></div>
+          <span class="cl" data-i="dots-three" data-s="16"></span>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 11 无痕模式 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">11</span><span class="t">无痕模式</span>
+    <span class="d">全屏深黑 + 品牌描边工具栏，明确告知不记录</span></div>
+  <div class="phone incognito">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="topbar">
+        <div class="omnibox" style="background:#141a2a">
+          <span class="site-id" style="background:rgba(148,163,184,.14);color:var(--color-text-muted)" data-i="eye-slash" data-s="14"></span>
+          <span class="ph">无痕搜索或输入网址</span>
+          <button class="ib-btn" aria-label="语音搜索" data-i="microphone" data-s="19"></button>
+        </div>
+      </div>
+      <div class="inc-banner">
+        <div class="cir" data-i="eye-slash" data-s="40"></div>
+        <h1>无痕浏览</h1>
+        <ul>
+          <li><span class="ic" data-i="clock-counter-clockwise" data-s="18"></span><span>浏览记录不会写入本机历史</span></li>
+          <li><span class="ic" data-i="copy-simple" data-s="18"></span><span>关闭全部无痕标签后清除 Cookie 与站点数据</span></li>
+          <li><span class="ic" data-i="shield-slash" data-s="18"></span><span>不会保存表单内容与密码</span></li>
+        </ul>
+        <p style="font-size:12px;color:var(--color-text-disabled);margin-top:6px">你的网络服务商、雇主或所访问的网站仍可能看到你的活动。</p>
+      </div>
+      <div class="toolbar-wrap">
+        <div class="toolbar inc">
+          <button class="tb" aria-label="后退" data-i="arrow-left" data-s="22"></button>
+          <button class="tb dis" aria-label="前进" data-i="arrow-right" data-s="22"></button>
+          <button class="tb" aria-label="主页" data-i="house-simple" data-s="22"></button>
+          <button class="tb" aria-label="标签页，1 个"><span class="num">1</span></button>
+          <button class="tb" aria-label="更多" data-i="dots-three" data-s="24" style="transform:rotate(90deg)"></button>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 12 设置 ───────────── -->
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">12</span><span class="t">设置</span>
+    <span class="d">分组列表，开关整行可点，命中区 ≥ 48dp</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="panel-head">
+        <span class="bk" data-i="arrow-left" data-s="22"></span>
+        <h1>设置</h1>
+      </div>
+      <div class="content">
+        <div class="stg-h">外观</div>
+        <div class="stg-group">
+          <div class="lrow"><span class="ic" data-i="moon" data-s="20"></span><span class="lb">主题</span><span class="vl">深色</span><span class="go" data-i="caret-right" data-s="16"></span></div>
+          <div class="lrow"><span class="ic" data-i="squares-four" data-s="20"></span><span class="lb">主页快捷入口</span><span class="vl">8 个</span><span class="go" data-i="caret-right" data-s="16"></span></div>
+          <div class="lrow"><span class="ic" data-i="newspaper" data-s="20"></span><span class="lb">主页资讯流</span><span class="switch on"><i></i></span></div>
+        </div>
+        <div class="stg-h">隐私与安全</div>
+        <div class="stg-group">
+          <div class="lrow"><span class="ic" data-i="shield-check" data-s="20"></span><span class="lb">追踪器拦截<small>已拦截 12.4 万次</small></span><span class="vl">标准</span><span class="go" data-i="caret-right" data-s="16"></span></div>
+          <div class="lrow"><span class="ic" data-i="lock-simple" data-s="20"></span><span class="lb">始终使用 HTTPS</span><span class="switch on"><i></i></span></div>
+          <div class="lrow"><span class="ic" data-i="eye-slash" data-s="20"></span><span class="lb">退出时清除浏览数据</span><span class="switch"><i></i></span></div>
+        </div>
+        <div class="stg-h">搜索与下载</div>
+        <div class="stg-group">
+          <div class="lrow"><span class="ic" data-i="magnifying-glass" data-s="20"></span><span class="lb">默认搜索引擎</span><span class="vl">Google</span><span class="go" data-i="caret-right" data-s="16"></span></div>
+          <div class="lrow"><span class="ic" data-i="download-simple" data-s="20"></span><span class="lb">下载位置</span><span class="vl">Download/</span><span class="go" data-i="caret-right" data-s="16"></span></div>
+          <div class="lrow"><span class="ic" data-i="desktop" data-s="20"></span><span class="lb">默认桌面版网站</span><span class="switch"><i></i></span></div>
+        </div>
+        <div class="stg-h">无障碍</div>
+        <div class="stg-group">
+          <div class="lrow"><span class="ic" data-i="text-aa" data-s="20"></span><span class="lb">强制网页字号</span><span class="switch on"><i></i></span></div>
+          <div class="lrow"><span class="ic" data-i="sparkle" data-s="20"></span><span class="lb">移除动画</span><span class="vl">跟随系统</span></div>
+        </div>
+        <div class="stg-h">关于</div>
+        <div class="stg-group">
+          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.0.0</span></div>
+          <div class="lrow"><span class="ic" data-i="link-simple" data-s="20"></span><span class="lb">开源许可</span><span class="go" data-i="caret-right" data-s="16"></span></div>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<footer class="foot">
+  <p><b>交付物</b> · 设计规格 <code>docs/superpowers/specs/2026-10-11-android-browser-design.md</code> · 设计系统 <code>design-system/aurora-browser/MASTER.md</code> · 本原型 <code>prototype/index.html</code></p>
+  <p style="margin-top:8px"><b>说明</b> · 412×915 dp 基准（Pixel 级）。图标为内联 Phosphor Regular 真实路径；字体 Inter / JetBrains Mono 通过 Google Fonts 加载，离线时回落到系统字体。所有颜色、间距、圆角均取自语义 token，未使用硬编码值。按压态使用颜色/透明度变化，不改变布局尺寸。</p>
+</footer>
+
+<script>
+/* ── Phosphor Regular icon paths (inline, no network) ────── */
+const ICONS={
+"arrow-left":"M224,128a8,8,0,0,1-8,8H59.31l58.35,58.34a8,8,0,0,1-11.32,11.32l-72-72a8,8,0,0,1,0-11.32l72-72a8,8,0,0,1,11.32,11.32L59.31,120H216A8,8,0,0,1,224,128Z",
+"arrow-u-up-left":"M232,144a64.07,64.07,0,0,1-64,64H80a8,8,0,0,1,0-16h88a48,48,0,0,0,0-96H51.31l34.35,34.34a8,8,0,0,1-11.32,11.32l-48-48a8,8,0,0,1,0-11.32l48-48A8,8,0,0,1,85.66,45.66L51.31,80H168A64.07,64.07,0,0,1,232,144Z",
+"arrow-right":"M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z",
+"house-simple":"M219.31,108.68l-80-80a16,16,0,0,0-22.62,0l-80,80A15.87,15.87,0,0,0,32,120v96a8,8,0,0,0,8,8H216a8,8,0,0,0,8-8V120A15.87,15.87,0,0,0,219.31,108.68ZM208,208H48V120l80-80,80,80Z",
+"squares-four":"M104,40H56A16,16,0,0,0,40,56v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V56A16,16,0,0,0,104,40Zm0,64H56V56h48v48Zm96-64H152a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V56A16,16,0,0,0,200,40Zm0,64H152V56h48v48Zm-96,32H56a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V152A16,16,0,0,0,104,136Zm0,64H56V152h48v48Zm96-64H152a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V152A16,16,0,0,0,200,136Zm0,64H152V152h48v48Z",
+"list":"M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM40,72H216a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16ZM216,184H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z",
+"magnifying-glass":"M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z",
+"x":"M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z",
+"plus":"M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z",
+"shield-check":"M208,40H48A16,16,0,0,0,32,56v56c0,52.72,25.52,84.67,46.93,102.19,23.06,18.86,46,25.26,47,25.53a8,8,0,0,0,4.2,0c1-.27,23.91-6.67,47-25.53C198.48,196.67,224,164.72,224,112V56A16,16,0,0,0,208,40Zm0,72c0,37.07-13.66,67.16-40.6,89.42A129.3,129.3,0,0,1,128,223.62a128.25,128.25,0,0,1-38.92-21.81C61.82,179.51,48,149.3,48,112l0-56,160,0ZM82.34,141.66a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35a8,8,0,0,1,11.32,11.32l-56,56a8,8,0,0,1-11.32,0Z",
+"lock-simple":"M208,80H176V56a48,48,0,0,0-96,0V80H48A16,16,0,0,0,32,96V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V96A16,16,0,0,0,208,80ZM96,56a32,32,0,0,1,64,0V80H96ZM208,208H48V96H208V208Z",
+"star":"M239.18,97.26A16.38,16.38,0,0,0,224.92,86l-59-4.76L143.14,26.15a16.36,16.36,0,0,0-30.27,0L90.11,81.23,31.08,86a16.46,16.46,0,0,0-9.37,28.86l45,38.83L53,211.75a16.38,16.38,0,0,0,24.5,17.82L128,198.49l50.53,31.08A16.4,16.4,0,0,0,203,211.75l-13.76-58.07,45-38.83A16.43,16.43,0,0,0,239.18,97.26Zm-15.34,5.47-48.7,42a8,8,0,0,0-2.56,7.91l14.88,62.8a.37.37,0,0,1-.17.48c-.18.14-.23.11-.38,0l-54.72-33.65a8,8,0,0,0-8.38,0L69.09,215.94c-.15.09-.19.12-.38,0a.37.37,0,0,1-.17-.48l14.88-62.8a8,8,0,0,0-2.56-7.91l-48.7-42c-.12-.1-.23-.19-.13-.5s.18-.27.33-.29l63.92-5.16A8,8,0,0,0,103,91.86l24.62-59.61c.08-.17.11-.25.35-.25s.27.08.35.25L153,91.86a8,8,0,0,0,6.75,4.92l63.92,5.16c.15,0,.24,0,.33.29S224,102.63,223.84,102.73Z",
+"clock-counter-clockwise":"M136,80v43.47l36.12,21.67a8,8,0,0,1-8.24,13.72l-40-24A8,8,0,0,1,120,128V80a8,8,0,0,1,16,0Zm-8-48A95.44,95.44,0,0,0,60.08,60.15C52.81,67.51,46.35,74.59,40,82V64a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H72a8,8,0,0,0,0-16H49c7.15-8.42,14.27-16.35,22.39-24.57a80,80,0,1,1,1.66,114.75,8,8,0,1,0-11,11.64A96,96,0,1,0,128,32Z",
+"download-simple":"M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z",
+"book-open-text":"M232,48H160a40,40,0,0,0-32,16A40,40,0,0,0,96,48H24a8,8,0,0,0-8,8V200a8,8,0,0,0,8,8H96a24,24,0,0,1,24,24,8,8,0,0,0,16,0,24,24,0,0,1,24-24h72a8,8,0,0,0,8-8V56A8,8,0,0,0,232,48ZM96,192H32V64H96a24,24,0,0,1,24,24V200A39.81,39.81,0,0,0,96,192Zm128,0H160a39.81,39.81,0,0,0-24,8V88a24,24,0,0,1,24-24h64ZM160,88h40a8,8,0,0,1,0,16H160a8,8,0,0,1,0-16Zm48,40a8,8,0,0,1-8,8H160a8,8,0,0,1,0-16h40A8,8,0,0,1,208,128Zm0,32a8,8,0,0,1-8,8H160a8,8,0,0,1,0-16h40A8,8,0,0,1,208,160Z",
+"eye-slash":"M53.92,34.62A8,8,0,1,0,42.08,45.38L61.32,66.55C25,88.84,9.38,123.2,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208a127.11,127.11,0,0,0,52.07-10.83l22,24.21a8,8,0,1,0,11.84-10.76Zm47.33,75.84,41.67,45.85a32,32,0,0,1-41.67-45.85ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.16,133.16,0,0,1,25,128c4.69-8.79,19.66-33.39,47.35-49.38l18,19.75a48,48,0,0,0,63.66,70l14.73,16.2A112,112,0,0,1,128,192Zm6-95.43a8,8,0,0,1,3-15.72,48.16,48.16,0,0,1,38.77,42.64,8,8,0,0,1-7.22,8.71,6.39,6.39,0,0,1-.75,0,8,8,0,0,1-8-7.26A32.09,32.09,0,0,0,134,96.57Zm113.28,34.69c-.42.94-10.55,23.37-33.36,43.8a8,8,0,1,1-10.67-11.92A132.77,132.77,0,0,0,231.05,128a133.15,133.15,0,0,0-23.12-30.77C185.67,75.19,158.78,64,128,64a118.37,118.37,0,0,0-19.36,1.57A8,8,0,1,1,106,49.79,134,134,0,0,1,128,48c34.88,0,66.57,13.26,91.66,38.35,18.83,18.83,27.3,37.62,27.65,38.41A8,8,0,0,1,247.31,131.26Z",
+"share-network":"M176,160a39.89,39.89,0,0,0-28.62,12.09l-46.1-29.63a39.8,39.8,0,0,0,0-28.92l46.1-29.63a40,40,0,1,0-8.66-13.45l-46.1,29.63a40,40,0,1,0,0,55.82l46.1,29.63A40,40,0,1,0,176,160Zm0-128a24,24,0,1,1-24,24A24,24,0,0,1,176,32ZM64,152a24,24,0,1,1,24-24A24,24,0,0,1,64,152Zm112,72a24,24,0,1,1,24-24A24,24,0,0,1,176,224Z",
+"gear-six":"M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm109.94-52.79a8,8,0,0,0-3.89-5.4l-29.83-17-.12-33.62a8,8,0,0,0-2.83-6.08,111.91,111.91,0,0,0-36.72-20.67,8,8,0,0,0-6.46.59L128,41.85,97.88,25a8,8,0,0,0-6.47-.6A112.1,112.1,0,0,0,54.73,45.15a8,8,0,0,0-2.83,6.07l-.15,33.65-29.83,17a8,8,0,0,0-3.89,5.4,106.47,106.47,0,0,0,0,41.56,8,8,0,0,0,3.89,5.4l29.83,17,.12,33.62a8,8,0,0,0,2.83,6.08,111.91,111.91,0,0,0,36.72,20.67,8,8,0,0,0,6.46-.59L128,214.15,158.12,231a7.91,7.91,0,0,0,3.9,1,8.09,8.09,0,0,0,2.57-.42,112.1,112.1,0,0,0,36.68-20.73,8,8,0,0,0,2.83-6.07l.15-33.65,29.83-17a8,8,0,0,0,3.89-5.4A106.47,106.47,0,0,0,237.94,107.21Zm-15,34.91-28.57,16.25a8,8,0,0,0-3,3c-.58,1-1.19,2.06-1.81,3.06a7.94,7.94,0,0,0-1.22,4.21l-.15,32.25a95.89,95.89,0,0,1-25.37,14.3L134,199.13a8,8,0,0,0-3.91-1h-.19c-1.21,0-2.43,0-3.64,0a8.08,8.08,0,0,0-4.1,1l-28.84,16.1A96,96,0,0,1,67.88,201l-.11-32.2a8,8,0,0,0-1.22-4.22c-.62-1-1.23-2-1.8-3.06a8.09,8.09,0,0,0-3-3.06l-28.6-16.29a90.49,90.49,0,0,1,0-28.26L61.67,97.63a8,8,0,0,0,3-3c.58-1,1.19-2.06,1.81-3.06a7.94,7.94,0,0,0,1.22-4.21l.15-32.25a95.89,95.89,0,0,1,25.37-14.3L122,56.87a8,8,0,0,0,4.1,1c1.21,0,2.43,0,3.64,0a8.08,8.08,0,0,0,4.1-1l28.84-16.1A96,96,0,0,1,188.12,55l.11,32.2a8,8,0,0,0,1.22,4.22c.62,1,1.23,2,1.8,3.06a8.09,8.09,0,0,0,3,3.06l28.6,16.29A90.49,90.49,0,0,1,222.9,142.12Z",
+"puzzle-piece":"M220.27,158.54a8,8,0,0,0-7.7-.46,20,20,0,1,1,0-36.16A8,8,0,0,0,224,114.69V72a16,16,0,0,0-16-16H171.78a35.36,35.36,0,0,0,.22-4,36.11,36.11,0,0,0-11.36-26.24,36,36,0,0,0-60.55,23.62,36.56,36.56,0,0,0,.14,6.62H64A16,16,0,0,0,48,72v32.22a35.36,35.36,0,0,0-4-.22,36.12,36.12,0,0,0-26.24,11.36,35.7,35.7,0,0,0-9.69,27,36.08,36.08,0,0,0,33.31,33.6,35.68,35.68,0,0,0,6.62-.14V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V165.31A8,8,0,0,0,220.27,158.54ZM208,208H64V165.31a8,8,0,0,0-11.43-7.23,20,20,0,1,1,0-36.16A8,8,0,0,0,64,114.69V72h46.69a8,8,0,0,0,7.23-11.43,20,20,0,1,1,36.16,0A8,8,0,0,0,161.31,72H208v32.23a35.68,35.68,0,0,0-6.62-.14A36,36,0,0,0,204,176a35.36,35.36,0,0,0,4-.22Z",
+"microphone":"M128,176a48.05,48.05,0,0,0,48-48V64a48,48,0,0,0-96,0v64A48.05,48.05,0,0,0,128,176ZM96,64a32,32,0,0,1,64,0v64a32,32,0,0,1-64,0Zm40,143.6V240a8,8,0,0,1-16,0V207.6A80.11,80.11,0,0,1,48,128a8,8,0,0,1,16,0,64,64,0,0,0,128,0,8,8,0,0,1,16,0A80.11,80.11,0,0,1,136,207.6Z",
+"qr-code":"M104,40H56A16,16,0,0,0,40,56v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V56A16,16,0,0,0,104,40Zm0,64H56V56h48v48Zm0,32H56a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V152A16,16,0,0,0,104,136Zm0,64H56V152h48v48ZM200,40H152a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V56A16,16,0,0,0,200,40Zm0,64H152V56h48v48Zm-64,72V144a8,8,0,0,1,16,0v32a8,8,0,0,1-16,0Zm80-16a8,8,0,0,1-8,8H184v40a8,8,0,0,1-8,8H144a8,8,0,0,1,0-16h24V144a8,8,0,0,1,16,0v8h24A8,8,0,0,1,216,160Zm0,32v16a8,8,0,0,1-16,0V192a8,8,0,0,1,16,0Z",
+"clipboard-text":"M168,152a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,152Zm-8-40H96a8,8,0,0,0,0,16h64a8,8,0,0,0,0-16Zm56-64V216a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V48A16,16,0,0,1,56,32H92.26a47.92,47.92,0,0,1,71.48,0H200A16,16,0,0,1,216,48ZM96,64h64a32,32,0,0,0-64,0ZM200,48H173.25A47.93,47.93,0,0,1,176,64v8a8,8,0,0,1-8,8H88a8,8,0,0,1-8-8V64a47.93,47.93,0,0,1,2.75-16H56V216H200Z",
+"arrow-clockwise":"M240,56v48a8,8,0,0,1-8,8H184a8,8,0,0,1,0-16H211.4L184.81,71.64l-.25-.24a80,80,0,1,0-1.67,114.78,8,8,0,0,1,11,11.63A95.44,95.44,0,0,1,128,224h-1.32A96,96,0,1,1,195.75,60L224,85.8V56a8,8,0,1,1,16,0Z",
+"caret-down":"M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z",
+"check-circle":"M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z",
+"warning-circle":"M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z",
+"globe":"M128,24h0A104,104,0,1,0,232,128,104.12,104.12,0,0,0,128,24Zm88,104a87.61,87.61,0,0,1-3.33,24H174.16a157.44,157.44,0,0,0,0-48h38.51A87.61,87.61,0,0,1,216,128ZM102,168H154a115.11,115.11,0,0,1-26,45A115.27,115.27,0,0,1,102,168Zm-3.9-16a140.84,140.84,0,0,1,0-48h59.88a140.84,140.84,0,0,1,0,48ZM40,128a87.61,87.61,0,0,1,3.33-24H81.84a157.44,157.44,0,0,0,0,48H43.33A87.61,87.61,0,0,1,40,128ZM154,88H102a115.11,115.11,0,0,1,26-45A115.27,115.27,0,0,1,154,88Zm52.33,0H170.71a135.28,135.28,0,0,0-22.3-45.6A88.29,88.29,0,0,1,206.37,88ZM107.59,42.4A135.28,135.28,0,0,0,85.29,88H49.63A88.29,88.29,0,0,1,107.59,42.4ZM49.63,168H85.29a135.28,135.28,0,0,0,22.3,45.6A88.29,88.29,0,0,1,49.63,168Zm98.78,45.6a135.28,135.28,0,0,0,22.3-45.6h35.66A88.29,88.29,0,0,1,148.41,213.6Z",
+"newspaper":"M88,112a8,8,0,0,1,8-8h80a8,8,0,0,1,0,16H96A8,8,0,0,1,88,112Zm8,40h80a8,8,0,0,0,0-16H96a8,8,0,0,0,0,16ZM232,64V184a24,24,0,0,1-24,24H32A24,24,0,0,1,8,184.11V88a8,8,0,0,1,16,0v96a8,8,0,0,0,16,0V64A16,16,0,0,1,56,48H216A16,16,0,0,1,232,64Zm-16,0H56V184a23.84,23.84,0,0,1-1.37,8H208a8,8,0,0,0,8-8Z",
+"user-circle":"M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24ZM74.08,197.5a64,64,0,0,1,107.84,0,87.83,87.83,0,0,1-107.84,0ZM96,120a32,32,0,1,1,32,32A32,32,0,0,1,96,120Zm97.76,66.41a79.66,79.66,0,0,0-36.06-28.75,48,48,0,1,0-59.4,0,79.66,79.66,0,0,0-36.06,28.75,88,88,0,1,1,131.52,0Z",
+"moon":"M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.34A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.34Z",
+"text-aa":"M87.24,52.59a8,8,0,0,0-14.48,0l-64,136a8,8,0,1,0,14.48,6.81L39.9,160h80.2l16.66,35.4a8,8,0,1,0,14.48-6.81ZM47.43,144,80,74.79,112.57,144ZM200,96c-12.76,0-22.73,3.47-29.63,10.32a8,8,0,0,0,11.26,11.36c3.8-3.77,10-5.68,18.37-5.68,13.23,0,24,9,24,20v3.22A42.76,42.76,0,0,0,200,128c-22.06,0-40,16.15-40,36s17.94,36,40,36a42.73,42.73,0,0,0,24-7.25,8,8,0,0,0,16-.75V132C240,112.15,222.06,96,200,96Zm0,88c-13.23,0-24-9-24-20s10.77-20,24-20,24,9,24,20S213.23,184,200,184Z",
+"translate":"M247.15,212.42l-56-112a8,8,0,0,0-14.31,0l-21.71,43.43A88,88,0,0,1,108,126.93,103.65,103.65,0,0,0,135.69,64H160a8,8,0,0,0,0-16H104V32a8,8,0,0,0-16,0V48H32a8,8,0,0,0,0,16h87.63A87.76,87.76,0,0,1,96,116.35a87.74,87.74,0,0,1-19-31,8,8,0,1,0-15.08,5.34A103.63,103.63,0,0,0,84,127a87.55,87.55,0,0,1-52,17,8,8,0,0,0,0,16,103.46,103.46,0,0,0,64-22.08,104.18,104.18,0,0,0,51.44,21.31l-26.6,53.19a8,8,0,0,0,14.31,7.16L148.94,192h70.11l13.79,27.58A8,8,0,0,0,240,224a8,8,0,0,0,7.15-11.58ZM156.94,176,184,121.89,211.05,176Z",
+"desktop":"M208,40H48A24,24,0,0,0,24,64V176a24,24,0,0,0,24,24h72v16H96a8,8,0,0,0,0,16h64a8,8,0,0,0,0-16H136V200h72a24,24,0,0,0,24-24V64A24,24,0,0,0,208,40ZM48,56H208a8,8,0,0,1,8,8v80H40V64A8,8,0,0,1,48,56ZM208,184H48a8,8,0,0,1-8-8V160H216v16A8,8,0,0,1,208,184Z",
+"image":"M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,16V158.75l-26.07-26.06a16,16,0,0,0-22.63,0l-20,20-44-44a16,16,0,0,0-22.62,0L40,149.37V56ZM40,172l52-52,80,80H40Zm176,28H194.63l-36-36,20-20L216,181.38V200ZM144,100a12,12,0,1,1,12,12A12,12,0,0,1,144,100Z",
+"bookmark-simple":"M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z",
+"trash-simple":"M216,48H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM192,208H64V64H192ZM80,24a8,8,0,0,1,8-8h80a8,8,0,0,1,0,16H88A8,8,0,0,1,80,24Z",
+"dots-three":"M140,128a12,12,0,1,1-12-12A12,12,0,0,1,140,128Zm56-12a12,12,0,1,0,12,12A12,12,0,0,0,196,116ZM60,116a12,12,0,1,0,12,12A12,12,0,0,0,60,116Z",
+"corners-out":"M216,48V88a8,8,0,0,1-16,0V56H168a8,8,0,0,1,0-16h40A8,8,0,0,1,216,48ZM88,200H56V168a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H88a8,8,0,0,0,0-16Zm120-40a8,8,0,0,0-8,8v32H168a8,8,0,0,0,0,16h40a8,8,0,0,0,8-8V168A8,8,0,0,0,208,160ZM88,40H48a8,8,0,0,0-8,8V88a8,8,0,0,0,16,0V56H88a8,8,0,0,0,0-16Z",
+"speaker-high":"M155.51,24.81a8,8,0,0,0-8.42.88L77.25,80H32A16,16,0,0,0,16,96v64a16,16,0,0,0,16,16H77.25l69.84,54.31A8,8,0,0,0,160,224V32A8,8,0,0,0,155.51,24.81ZM32,96H72v64H32ZM144,207.64,88,164.09V91.91l56-43.55Zm54-106.08a40,40,0,0,1,0,52.88,8,8,0,0,1-12-10.58,24,24,0,0,0,0-31.72,8,8,0,0,1,12-10.58ZM248,128a79.9,79.9,0,0,1-20.37,53.34,8,8,0,0,1-11.92-10.67,64,64,0,0,0,0-85.33,8,8,0,1,1,11.92-10.67A79.83,79.83,0,0,1,248,128Z",
+"wifi-x":"M229.66,98.34a8,8,0,0,1-11.32,11.32L200,91.31l-18.34,18.35a8,8,0,0,1-11.32-11.32L188.69,80,170.34,61.66a8,8,0,0,1,11.32-11.32L200,68.69l18.34-18.35a8,8,0,0,1,11.32,11.32L211.31,80ZM128,192a12,12,0,1,0,12,12A12,12,0,0,0,128,192Zm44.71-33.47a76.05,76.05,0,0,0-89.42,0,8,8,0,0,0,9.42,12.94,60,60,0,0,1,70.58,0,8,8,0,1,0,9.42-12.94ZM135.62,64.18a8,8,0,1,0,.76-16c-2.78-.13-5.6-.2-8.38-.2A172.35,172.35,0,0,0,18.92,87,8,8,0,1,0,29.08,99.37,156.25,156.25,0,0,1,128,64C130.53,64,133.09,64.06,135.62,64.18Zm-.16,48.07a8,8,0,1,0,1.08-16c-2.83-.19-5.7-.29-8.54-.29a122.74,122.74,0,0,0-77,26.77A8,8,0,0,0,56,137a7.93,7.93,0,0,0,5-1.73A106.87,106.87,0,0,1,128,112C130.48,112,133,112.08,135.46,112.25Z",
+"fire":"M183.89,153.34a57.6,57.6,0,0,1-46.56,46.55A8.75,8.75,0,0,1,136,200a8,8,0,0,1-1.32-15.89c16.57-2.79,30.63-16.85,33.44-33.45a8,8,0,0,1,15.78,2.68ZM216,144a88,88,0,0,1-176,0c0-27.92,11-56.47,32.66-84.85a8,8,0,0,1,11.93-.89l24.12,23.41,22-60.41a8,8,0,0,1,12.63-3.41C165.21,36,216,84.55,216,144Zm-16,0c0-46.09-35.79-85.92-58.21-106.33L119.52,98.74a8,8,0,0,1-13.09,3L80.06,76.16C64.09,99.21,56,122,56,144a72,72,0,0,0,144,0Z",
+"folder-simple":"M216,72H130.67L102.93,51.2a16.12,16.12,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V200a16,16,0,0,0,16,16H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72Zm0,128H40V64H93.33L123.2,86.4A8,8,0,0,0,128,88h88Z",
+"link-simple":"M165.66,90.34a8,8,0,0,1,0,11.32l-64,64a8,8,0,0,1-11.32-11.32l64-64A8,8,0,0,1,165.66,90.34ZM215.6,40.4a56,56,0,0,0-79.2,0L106.34,70.45a8,8,0,0,0,11.32,11.32l30.06-30a40,40,0,0,1,56.57,56.56l-30.07,30.06a8,8,0,0,0,11.31,11.32L215.6,119.6a56,56,0,0,0,0-79.2ZM138.34,174.22l-30.06,30.06a40,40,0,1,1-56.56-56.57l30.05-30.05a8,8,0,0,0-11.32-11.32L40.4,136.4a56,56,0,0,0,79.2,79.2l30.06-30.07a8,8,0,0,0-11.32-11.31Z",
+"sparkle":"M197.58,129.06,146,110l-19-51.62a15.92,15.92,0,0,0-29.88,0L78,110l-51.62,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0L146,178l51.62-19a15.92,15.92,0,0,0,0-29.88ZM137,164.22a8,8,0,0,0-4.74,4.74L112,223.85,91.78,169A8,8,0,0,0,87,164.22L32.15,144,87,123.78A8,8,0,0,0,91.78,119L112,64.15,132.22,119a8,8,0,0,0,4.74,4.74L191.85,144ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z",
+"copy-simple":"M184,64H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H184a8,8,0,0,0,8-8V72A8,8,0,0,0,184,64Zm-8,144H48V80H176ZM224,40V184a8,8,0,0,1-16,0V48H72a8,8,0,0,1,0-16H216A8,8,0,0,1,224,40Z",
+"push-pin-simple":"M216,168h-9.29L185.54,48H192a8,8,0,0,0,0-16H64a8,8,0,0,0,0,16h6.46L49.29,168H40a8,8,0,0,0,0,16h80v56a8,8,0,0,0,16,0V184h80a8,8,0,0,0,0-16ZM86.71,48h82.58l21.17,120H65.54Z",
+"caret-right":"M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z",
+"minus":"M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128Z",
+"crosshair-simple":"M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm8,191.63V184a8,8,0,0,0-16,0v31.63A88.13,88.13,0,0,1,40.37,136H72a8,8,0,0,0,0-16H40.37A88.13,88.13,0,0,1,120,40.37V72a8,8,0,0,0,16,0V40.37A88.13,88.13,0,0,1,215.63,120H184a8,8,0,0,0,0,16h31.63A88.13,88.13,0,0,1,136,215.63Z",
+"shield-slash":"M53.92,34.62A8,8,0,0,0,40.26,42,16,16,0,0,0,32,56v56c0,52.72,25.52,84.67,46.93,102.19,23.06,18.86,46,25.27,47,25.53a8,8,0,0,0,4.2,0c1.36-.37,31.27-8.78,57.09-34.72l14.89,16.38a8,8,0,1,0,11.84-10.76Zm74.07,189a128.48,128.48,0,0,1-38.92-21.81C61.82,179.51,48,149.3,48,112l0-56h3.71L176.41,193.15A129.26,129.26,0,0,1,128,223.62ZM224,56v56c0,20.58-3.89,39.61-11.56,56.59A8,8,0,1,1,197.86,162c6.73-14.89,10.14-31.71,10.14-50V56L98.52,56a8,8,0,1,1,0-16H208A16,16,0,0,1,224,56Z",
+"eye":"M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.47,133.47,0,0,1,25,128,133.33,133.33,0,0,1,48.07,97.25C70.33,75.19,97.22,64,128,64s57.67,11.19,79.93,33.25A133.46,133.46,0,0,1,231.05,128C223.84,141.46,192.43,192,128,192Zm0-112a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Z",
+"clock":"M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm64-88a8,8,0,0,1-8,8H128a8,8,0,0,1-8-8V72a8,8,0,0,1,16,0v48h48A8,8,0,0,1,192,128Z",
+"user-list":"M152,80a8,8,0,0,1,8-8h88a8,8,0,0,1,0,16H160A8,8,0,0,1,152,80Zm96,40H160a8,8,0,0,0,0,16h88a8,8,0,0,0,0-16Zm0,48H184a8,8,0,0,0,0,16h64a8,8,0,0,0,0-16Zm-96.25,22a8,8,0,0,1-5.76,9.74,7.55,7.55,0,0,1-2,.26,8,8,0,0,1-7.75-6c-6.16-23.94-30.34-42-56.25-42s-50.09,18.05-56.25,42a8,8,0,0,1-15.5-4c5.59-21.71,21.84-39.29,42.46-48a48,48,0,1,1,58.58,0C129.91,150.71,146.16,168.29,151.75,190ZM80,136a32,32,0,1,0-32-32A32,32,0,0,0,80,136Z",
+"dots-nine":"M72,60A12,12,0,1,1,60,48,12,12,0,0,1,72,60Zm56-12a12,12,0,1,0,12,12A12,12,0,0,0,128,48Zm68,24a12,12,0,1,0-12-12A12,12,0,0,0,196,72ZM60,116a12,12,0,1,0,12,12A12,12,0,0,0,60,116Zm68,0a12,12,0,1,0,12,12A12,12,0,0,0,128,116Zm68,0a12,12,0,1,0,12,12A12,12,0,0,0,196,116ZM60,184a12,12,0,1,0,12,12A12,12,0,0,0,60,184Zm68,0a12,12,0,1,0,12,12A12,12,0,0,0,128,184Zm68,0a12,12,0,1,0,12,12A12,12,0,0,0,196,184Z"
+};
+
+/* inject icons */
+document.querySelectorAll('[data-i]').forEach(el=>{
+  const d=ICONS[el.dataset.i];
+  if(!d) return;
+  const s=el.dataset.s||'24';
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('viewBox','0 0 256 256');
+  svg.setAttribute('fill','currentColor');
+  svg.setAttribute('width',s);svg.setAttribute('height',s);
+  svg.setAttribute('aria-hidden','true');
+  svg.style.display='block';
+  const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+  p.setAttribute('d',d);svg.appendChild(p);
+  el.innerHTML='';el.appendChild(svg);
+});
+
+/* build keyboard for screen 02 */
+(function(){
+  const kb=document.getElementById('kb');
+  if(!kb) return;
+  const rows=[['Q','W','E','R','T','Y','U','I','O','P'],
+              ['A','S','D','F','G','H','J','K','L'],
+              ['⇧','Z','X','C','V','B','N','M','⌫']];
+  rows.forEach((r,i)=>{
+    const d=document.createElement('div');d.className='kb-row';
+    r.forEach(k=>{
+      const b=document.createElement('div');
+      b.className='key'+(i===2&&(k==='⇧'||k==='⌫')?' fn':'');
+      b.textContent=k;d.appendChild(b);
+    });
+    kb.appendChild(d);
+  });
+  const d4=document.createElement('div');d4.className='kb-row';
+  ['?123','表情','space','.','⏎'].forEach(k=>{
+    const b=document.createElement('div');
+    b.className='key'+(k==='space'?' space':' fn');
+    b.textContent=k==='space'?'空格':k;d4.appendChild(b);
+  });
+  kb.appendChild(d4);
+})();
+</script>
+</body>
+</html>
