@@ -66,6 +66,56 @@ class TabRepositoryTest {
         assertThat(repo.tabs.value.map { it.id }).containsExactly(b, c, a).inOrder()
     }
 
+    /**
+     * 拖动排序的语义是「把元素插到目标下标处」，因此两个方向的结果不对称：
+     * 0→2 得 [b,c,a]，2→0 得 [c,a,b]。只写一个方向会掩盖另一半的错误实现
+     * （例如先移除再按下标插入的经典 off-by-one）。
+     */
+    @Test fun moveIsDirectionSensitive() {
+        val repo = TabRepository()
+        repo.newTab("https://b.com")
+        repo.newTab("https://c.com")
+        val ids = repo.tabs.value.map { it.id }
+
+        repo.move(from = 2, to = 0)
+        assertThat(repo.tabs.value.map { it.id })
+            .containsExactly(ids[2], ids[0], ids[1]).inOrder()
+    }
+
+    @Test fun moveOutOfRangeIsANoOp() {
+        val repo = TabRepository()
+        repo.newTab("https://b.com")
+        val before = repo.tabs.value.map { it.id }
+        repo.move(from = -1, to = 0)
+        repo.move(from = 0, to = 5)
+        repo.move(from = 9, to = 0)
+        assertThat(repo.tabs.value.map { it.id }).containsExactlyElementsIn(before).inOrder()
+    }
+
+    @Test fun closingUnknownTabIsANoOp() {
+        val repo = TabRepository()
+        val before = repo.tabs.value.map { it.id }
+        repo.close("does-not-exist")
+        assertThat(repo.tabs.value.map { it.id }).containsExactlyElementsIn(before).inOrder()
+        assertThat(repo.activeId.value).isEqualTo(before.first())
+    }
+
+    @Test fun selectingUnknownTabKeepsActive() {
+        val repo = TabRepository()
+        val active = repo.activeId.value
+        repo.select("does-not-exist")
+        assertThat(repo.activeId.value).isEqualTo(active)
+    }
+
+    /** 无痕标记只影响该标签，不能渗到别的标签上。 */
+    @Test fun incognitoFlagDoesNotLeakToOtherTabs() {
+        val repo = TabRepository()
+        val normal = repo.tabs.value.first().id
+        val incognito = repo.newTab("https://e.com", incognito = true).id
+        assertThat(repo.tabs.value.first { it.id == incognito }.isIncognito).isTrue()
+        assertThat(repo.tabs.value.first { it.id == normal }.isIncognito).isFalse()
+    }
+
     @Test fun tabsListIsImmutableSnapshot() {
         val repo = TabRepository()
         val snapshot = repo.tabs.value

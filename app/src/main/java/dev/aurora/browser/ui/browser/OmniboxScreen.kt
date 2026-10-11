@@ -2,9 +2,7 @@ package dev.aurora.browser.ui.browser
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,31 +19,37 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.aurora.browser.ui.components.auroraClickable
 import dev.aurora.browser.ui.icons.AuroraIcons
 import dev.aurora.browser.ui.theme.*
 
 @Composable
 fun OmniboxScreen(
     query: String,
-    suggestions: List<String>,
+    suggestions: List<OmniboxSuggestion>,
     onQueryChange: (String) -> Unit,
     onSubmit: (String) -> Unit,
+    onPickSuggestion: (OmniboxSuggestion) -> Unit,
     onDismiss: () -> Unit,
+    onPasteAndGo: () -> Unit,
+    onVoice: () -> Unit,
+    onScan: () -> Unit,
+    onIncognito: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Aurora.colors
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
-    // Page/WebView 现在常驻在下方，本覆盖层必须吞掉空白区域的点击，否则会穿透到 WebView。
+    // Page/WebView 常驻在下方，本覆盖层必须吞掉空白区域的点击，否则会穿透到 WebView。
     // 不透明 background 只是绘制，不是命中测试边界——只有消费型指针修饰符才能挡住事件。
     // 用 detectTapGestures（而非 clickable）：它只消费事件、不添加 Button 语义角色，且要求
-    // down 未被消费，因此覆盖层自身的控件（输入框、建议行）仍能拿到点击。同 AuroraBottomSheet 的做法。
+    // down 未被消费，因此覆盖层自身的控件（输入框、建议行）仍能拿到点击。同 AuroraBottomSheet。
     Column(
         modifier = modifier
             .pointerInput(Unit) { detectTapGestures { } }
@@ -89,12 +93,7 @@ fun OmniboxScreen(
                 modifier = Modifier
                     .size(AuroraSpacing.touchTarget)
                     .clip(RoundedCornerShape(AuroraRadius.full))
-                    .clickable(
-                        role = Role.Button,
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onDismiss,
-                    )
+                    .auroraClickable(onClick = onDismiss)
                     .semantics { contentDescription = "关闭地址栏" },
                 contentAlignment = Alignment.Center,
             ) {
@@ -106,38 +105,63 @@ fun OmniboxScreen(
 
         // 唯一滚动容器
         LazyColumn(modifier = Modifier.weight(1f)) {
-            items(suggestions, key = { it }) { s ->
+            items(suggestions, key = { it.kind.name + it.url }) { s ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 50.dp)
-                        .clickable(
-                            role = Role.Button,
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = { onSubmit(s) },
-                        )
-                        .semantics { contentDescription = "建议：$s" }
+                        .heightIn(min = 56.dp)
+                        .auroraClickable(onClick = { onPickSuggestion(s) })
+                        .semantics { contentDescription = "建议：${s.label}" }
                         .padding(horizontal = AuroraSpacing.m),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.m),
                 ) {
-                    Icon(painterResource(AuroraIcons.Search), null, tint = c.textMuted, modifier = Modifier.size(19.dp))
-                    Text(s, color = c.text, modifier = Modifier.weight(1f))
-                    Icon(painterResource(AuroraIcons.ChevronRight), null, tint = c.textDisabled, modifier = Modifier.size(16.dp))
+                    Icon(
+                        painter = painterResource(iconOf(s.kind)),
+                        contentDescription = null,
+                        tint = c.textMuted,
+                        modifier = Modifier.size(19.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = s.label,
+                            color = c.text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        // 类型标签：让用户看得出这一行是搜索、直连网址，还是来自书签/历史。
+                        Text(
+                            text = s.kind.hint,
+                            color = c.textMuted,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    Icon(
+                        painter = painterResource(AuroraIcons.ChevronRight),
+                        contentDescription = null,
+                        tint = c.textDisabled,
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
             }
             item {
                 Spacer(Modifier.height(AuroraSpacing.l))
                 Row(horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.s)) {
-                    QuickAction(AuroraIcons.QrCode, "扫码", Modifier.weight(1f)) {}
-                    QuickAction(AuroraIcons.Mic, "语音", Modifier.weight(1f)) {}
-                    QuickAction(AuroraIcons.Clipboard, "粘贴并前往", Modifier.weight(1f)) {}
-                    QuickAction(AuroraIcons.Incognito, "无痕", Modifier.weight(1f)) {}
+                    QuickAction(AuroraIcons.QrCode, "扫码", Modifier.weight(1f), onScan)
+                    QuickAction(AuroraIcons.Mic, "语音", Modifier.weight(1f), onVoice)
+                    QuickAction(AuroraIcons.Clipboard, "粘贴并前往", Modifier.weight(1f), onPasteAndGo)
+                    QuickAction(AuroraIcons.Incognito, "无痕", Modifier.weight(1f), onIncognito)
                 }
             }
         }
     }
+}
+
+private fun iconOf(kind: SuggestionKind): Int = when (kind) {
+    SuggestionKind.SEARCH -> AuroraIcons.Search
+    SuggestionKind.URL -> AuroraIcons.Globe
+    SuggestionKind.BOOKMARK -> AuroraIcons.Star
+    SuggestionKind.HISTORY -> AuroraIcons.History
 }
 
 @Composable
@@ -147,21 +171,17 @@ private fun QuickAction(
     val c = Aurora.colors
     Column(
         modifier = modifier
+            .heightIn(min = 72.dp)
             .clip(RoundedCornerShape(AuroraRadius.m))
             .background(c.bgElevated)
             .border(1.dp, c.divider, RoundedCornerShape(AuroraRadius.m))
-            .clickable(
-                role = Role.Button,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            )
+            .auroraClickable(onClick = onClick)
             .padding(vertical = AuroraSpacing.m)
             .semantics { contentDescription = label },
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(AuroraSpacing.s),
+        verticalArrangement = Arrangement.spacedBy(AuroraSpacing.s, Alignment.CenterVertically),
     ) {
         Icon(painterResource(icon), null, tint = c.brand, modifier = Modifier.size(21.dp))
-        Text(label, color = c.textSecondary)
+        Text(label, color = c.textSecondary, maxLines = 1)
     }
 }

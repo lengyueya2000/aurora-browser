@@ -2,9 +2,7 @@ package dev.aurora.browser.ui.browser
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -20,13 +18,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.aurora.browser.domain.model.BrowserTab
 import dev.aurora.browser.ui.components.SegmentedControl
+import dev.aurora.browser.ui.components.auroraClickable
 import dev.aurora.browser.ui.components.hostOf
 import dev.aurora.browser.ui.icons.AuroraIcons
 import dev.aurora.browser.ui.theme.*
@@ -44,21 +42,22 @@ fun TabSwitcherScreen(
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
     initialLayout: TabLayout = TabLayout.GRID,
+    onNewIncognitoTab: () -> Unit = {},
 ) {
     val c = Aurora.colors
     var layout by remember { mutableStateOf(initialLayout) }
 
-    // Page/WebView 现在常驻在下方，本覆盖层必须吞掉空白区域的点击（如空标签列表的空白视口），
+    // Page/WebView 常驻在下方，本覆盖层必须吞掉空白区域的点击（如空标签列表的空白视口），
     // 否则会穿透到 WebView。不透明 background 只是绘制，不是命中测试边界——只有消费型指针
     // 修饰符才能挡住事件。用 detectTapGestures（而非 clickable）：只消费事件、不加 Button
-    // 语义角色，且要求 down 未被消费，因此标签卡片/按钮仍能拿到自己的点击。同 AuroraBottomSheet 的做法。
+    // 语义角色，且要求 down 未被消费，因此标签卡片/按钮仍能拿到自己的点击。同 AuroraBottomSheet。
     Column(
         modifier = modifier
             .pointerInput(Unit) { detectTapGestures { } }
             .fillMaxSize()
             .background(c.bg),
     ) {
-        // 顶栏：计数 + 视图切换 + 新建 + 关闭全部
+        // 顶栏：计数 + 视图切换
         Row(
             modifier = Modifier.fillMaxWidth().padding(AuroraSpacing.l),
             verticalAlignment = Alignment.CenterVertically,
@@ -103,7 +102,7 @@ fun TabSwitcherScreen(
             }
         }
 
-        // 底部：关闭全部 / 新建 / 完成
+        // 底部：关闭全部 / 新建（普通 + 无痕）/ 完成
         Row(
             modifier = Modifier.fillMaxWidth().padding(AuroraSpacing.l),
             verticalAlignment = Alignment.CenterVertically,
@@ -111,22 +110,36 @@ fun TabSwitcherScreen(
         ) {
             IconAction(AuroraIcons.Trash, "关闭全部标签页", onCloseAll)
             Spacer(Modifier.weight(1f))
+            // 无痕入口做成描边圆钮（对照填充品牌色的普通新建），两个相邻可点目标
+            // 之间有 8dp 间距（Row 的 spacedBy），满足全局约束。
+            Box(
+                modifier = Modifier
+                    .size(AuroraSpacing.touchTarget)
+                    .clip(RoundedCornerShape(AuroraRadius.full))
+                    .background(c.bgElevated)
+                    .border(1.dp, c.brand.copy(alpha = 0.5f), RoundedCornerShape(AuroraRadius.full))
+                    .auroraClickable(onClick = onNewIncognitoTab)
+                    .semantics { contentDescription = "新建无痕标签页" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(AuroraIcons.Incognito),
+                    contentDescription = null,
+                    tint = c.brand,
+                )
+            }
             Box(
                 modifier = Modifier
                     .size(AuroraSpacing.touchTarget)
                     .clip(RoundedCornerShape(AuroraRadius.full))
                     .background(c.brand)
-                    .clickable(
-                        role = Role.Button,
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onNewTab,
-                    ),
+                    .auroraClickable(onClick = onNewTab)
+                    .semantics { contentDescription = "新建标签页" },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     painter = painterResource(AuroraIcons.Add),
-                    contentDescription = "新建标签页",
+                    contentDescription = null,
                     tint = c.onBrand,
                 )
             }
@@ -143,50 +156,47 @@ private fun IconAction(icon: Int, label: String, onClick: () -> Unit) {
         modifier = Modifier
             .size(AuroraSpacing.touchTarget)
             .clip(RoundedCornerShape(AuroraRadius.full))
-            .clickable(
-                role = Role.Button,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
+            .auroraClickable(onClick = onClick)
+            .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(painter = painterResource(icon), contentDescription = label, tint = c.textSecondary)
+        Icon(painter = painterResource(icon), contentDescription = null, tint = c.textSecondary)
     }
 }
 
 @Composable
 private fun TabCard(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit, onClose: () -> Unit) {
     val c = Aurora.colors
+    val accent = if (tab.isIncognito) c.brand.copy(alpha = 0.5f) else if (selected) c.brand else c.divider
     Column(
         modifier = Modifier
             .clip(RoundedCornerShape(AuroraRadius.m))
             .background(c.surface)
-            .border(
-                1.dp,
-                if (selected) c.brand else c.divider,
-                RoundedCornerShape(AuroraRadius.m),
-            )
-            .clickable(
-                role = Role.Button,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onSelect,
-            ),
+            .border(1.dp, accent, RoundedCornerShape(AuroraRadius.m))
+            .auroraClickable(onClick = onSelect),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(96.dp).background(c.bgElevated)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(96.dp)
+                .background(if (tab.isIncognito) c.bg else c.bgElevated),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (tab.isIncognito) {
+                Icon(
+                    painter = painterResource(AuroraIcons.Incognito),
+                    contentDescription = "无痕标签页",
+                    tint = c.brand,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
             // 关闭是独立可点目标，触摸区必须 ≥48dp（全局约束「最小触摸目标 48×48dp」）。
             // 可见的圆形底片仍保持 28dp，由 48dp 触摸区居中包裹它。
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .size(AuroraSpacing.touchTarget)
-                    .clickable(
-                        role = Role.Button,
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onClose,
-                    )
+                    .auroraClickable(onClick = onClose)
                     .semantics { contentDescription = "关闭标签页" },
                 contentAlignment = Alignment.Center,
             ) {
@@ -224,16 +234,19 @@ private fun TabRowItem(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit,
             .fillMaxWidth()
             .heightIn(min = 60.dp)
             .background(if (selected) c.surfaceHover else c.bg)
-            .clickable(
-                role = Role.Button,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onSelect,
-            )
+            .auroraClickable(onClick = onSelect)
             .padding(horizontal = AuroraSpacing.l),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.m),
     ) {
+        if (tab.isIncognito) {
+            Icon(
+                painter = painterResource(AuroraIcons.Incognito),
+                contentDescription = "无痕标签页",
+                tint = c.brand,
+                modifier = Modifier.size(18.dp),
+            )
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(tab.title, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(

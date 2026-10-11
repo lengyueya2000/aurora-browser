@@ -5,6 +5,7 @@ import android.webkit.WebView
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.ui.theme.AuroraTheme
 import org.junit.Rule
@@ -19,6 +20,8 @@ import org.robolectric.annotation.Config
 class WebViewContainerTest {
     @get:Rule val compose = createComposeRule()
 
+    private val context: Context = ApplicationProvider.getApplicationContext()
+
     private class FakeController : BrowserController {
         var loaded: String? = null
         var reloads = 0
@@ -32,9 +35,8 @@ class WebViewContainerTest {
     }
 
     /**
-     * 捕获容器实际创建的 WebView。Robolectric 4.14.1 没有 `getLastCreatedWebView()`，
-     * 因此走 `factory` 注入（该参数本就是为测试而留），再用 `shadowOf(web).lastLoadedUrl`
-     * 观察它收到的 URL。
+     * 捕获池实际创建的 WebView。Robolectric 4.13 没有 `getLastCreatedWebView()`，
+     * 因此走 `WebViewPool` 的 `factory` 注入（该参数本就是为测试而留）。
      */
     private class WebViewFactory {
         var created: WebView? = null
@@ -59,25 +61,28 @@ class WebViewContainerTest {
     }
 
     @Test fun loadsRequestedUrlOnFirstComposition() {
-        val controller = FakeController()
         val f = WebViewFactory()
+        val pool = WebViewPool(context, f.factory)
         compose.setContent {
             AuroraTheme {
-                WebViewContainer(controller = controller, url = "https://a.com", factory = f.factory)
+                WebViewContainer(
+                    controller = FakeController(), pool = pool, tabId = "t1", url = "https://a.com",
+                )
             }
         }
         compose.onRoot().assertExists()
-        // 断言 WebView 真的被创建并收到 URL
         val web = f.created
         assertThat(web).isNotNull()
         assertThat(shadowOf(web!!).lastLoadedUrl).isEqualTo("https://a.com")
     }
 
     @Test fun blankUrlDoesNotLoadAnything() {
-        val controller = FakeController()
         val f = WebViewFactory()
+        val pool = WebViewPool(context, f.factory)
         compose.setContent {
-            AuroraTheme { WebViewContainer(controller = controller, url = null, factory = f.factory) }
+            AuroraTheme {
+                WebViewContainer(controller = FakeController(), pool = pool, tabId = "t1", url = null)
+            }
         }
         compose.onRoot().assertExists()
         val web = f.created
@@ -85,37 +90,13 @@ class WebViewContainerTest {
         assertThat(shadowOf(web!!).lastLoadedUrl).isNull()
     }
 
-    // 重组后传入的新回调必须生效：客户端不能一直调用首次组合时捕获的那个 lambda。
-    @Test fun callbacksFollowTheLatestLambdaAfterRecomposition() {
-        var first = -1
-        var second = -1
-        val useSecond = mutableStateOf(false)
-        val f = WebViewFactory()
-        compose.setContent {
-            AuroraTheme {
-                val onProgress: (Int) -> Unit =
-                    if (useSecond.value) { { second = it } } else { { first = it } }
-                WebViewContainer(
-                    controller = FakeController(), url = null,
-                    onProgress = onProgress, factory = f.factory,
-                )
-            }
-        }
-        useSecond.value = true
-        compose.waitForIdle()
-        val web = f.created!!
-        shadowOf(web).webChromeClient.onProgressChanged(web, 42)
-        assertThat(second).isEqualTo(42)
-        assertThat(first).isEqualTo(-1)
-    }
-
     /**
      * FIX 2 的回归测试：`onPageFinished` 会把真实地址回写成 `url` 参数，若加载 effect 不加
      * 「WebView 是否已在该地址」的守卫，重定向/站内跳转会重复 `loadUrl`（多一次加载 + 多一条历史）。
      */
     @Test fun doesNotReloadWhenUrlIsUnchanged() {
-        val controller = FakeController()
         var created: CountingWebView? = null
+        val pool = WebViewPool(context) { ctx -> CountingWebView(ctx).also { created = it } }
         val urlState = mutableStateOf("https://a.com")
         // 无关状态：读取它可在 url 不变时强制重组，验证「纯重组不触发加载」。
         val tick = mutableStateOf(0)
@@ -123,9 +104,7 @@ class WebViewContainerTest {
             AuroraTheme {
                 tick.value
                 WebViewContainer(
-                    controller = controller,
-                    url = urlState.value,
-                    factory = { ctx -> CountingWebView(ctx).also { created = it } },
+                    controller = FakeController(), pool = pool, tabId = "t1", url = urlState.value,
                 )
             }
         }
@@ -141,7 +120,7 @@ class WebViewContainerTest {
         assertThat(web.loadCount).isEqualTo(1)
 
         // 模拟重定向：WebView 自身已停在 final 地址（不经过 loadUrl），随后 onPageFinished
-        // 把该地址回写为新的 url（等价 vm.updateActiveTab）。effect 因 url 变化重跑，
+        // 把该地址回写为新的 url（等价 vm.onPageFinished）。effect 因 url 变化重跑，
         // 但 WebView 已在该地址上——守卫必须拦下。
         web.navigateWithoutLoad("https://a.com/final")
         urlState.value = "https://a.com/final"
@@ -153,5 +132,51 @@ class WebViewContainerTest {
         compose.waitForIdle()
         assertThat(web.loadCount).isEqualTo(2)
         assertThat(web.url).isEqualTo("https://b.com")
+    }
+
+    /** 同一标签在多次重组之间必须复用池里的同一个实例。 */
+    @Test fun reusesTheSameWebViewInstanceForTheSameTab() {
+        val f = WebViewFactory()
+        val pool = WebViewPool(context, f.factory)
+        val tick = mutableStateOf(0)
+        compose.setContent {
+            AuroraTheme {
+                tick.value
+                WebViewContainer(controller = FakeController(), pool = pool, tabId = "t1", url = null)
+            }
+        }
+        compose.waitForIdle()
+        val first = f.created
+        tick.value = 1
+        compose.waitForIdle()
+        assertThat(f.created).isSameInstanceAs(first)
+        assertThat(pool.retainedTabIds()).containsExactly("t1")
+    }
+
+    /**
+     * 回归：WebView 归 `WebViewPool` 所有。离开组合（例如打开地址栏覆盖层把 Page 分支换掉）
+     * 只能解绑控制器，不能销毁实例——否则切回来要重新加载，滚动位置与前进/后退历史全丢。
+     */
+    @Test fun leavingCompositionKeepsTheWebViewAliveInThePool() {
+        val f = WebViewFactory()
+        val pool = WebViewPool(context, f.factory)
+        val visible = mutableStateOf(true)
+        compose.setContent {
+            AuroraTheme {
+                if (visible.value) {
+                    WebViewContainer(
+                        controller = FakeController(), pool = pool, tabId = "t1", url = "https://a.com",
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        val web = f.created!!
+        visible.value = false
+        compose.waitForIdle()
+        assertThat(shadowOf(web).wasDestroyCalled()).isFalse()
+        assertThat(pool.retainedTabIds()).containsExactly("t1")
+        // 池仍可交出同一个实例
+        assertThat(pool.get("t1", false)).isSameInstanceAs(web)
     }
 }

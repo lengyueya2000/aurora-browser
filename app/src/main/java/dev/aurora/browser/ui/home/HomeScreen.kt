@@ -16,11 +16,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.aurora.browser.ui.icons.AuroraIcons
 import dev.aurora.browser.ui.theme.*
+
+/** 信息流缩略图的固定比例（宽 4 : 高 3），不取自间距刻度——它不是间距。 */
+private val FeedThumbWidth = 88.dp
+private val FeedThumbHeight = 66.dp
+
+/** 给悬浮工具栏留出的底部空间：工具栏 58dp + 上下留白，避免最后一条内容被压住。 */
+private val BottomToolbarClearance = 96.dp
 
 data class Shortcut(val label: String, val url: String)
 
@@ -66,12 +74,17 @@ fun HomeScreen(
                         indication = null,
                         onClick = onSearch,
                     )
-                    .semantics { contentDescription = "搜索或输入网址" }
+                    .semantics(mergeDescendants = true) { contentDescription = "搜索或输入网址" }
                     .padding(horizontal = AuroraSpacing.l),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.s)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.s),
+                    // 整条已经用 contentDescription 描述过了；不清掉里面的图标与文字，
+                    // 合并语义后读屏会把「搜索或输入网址」念两遍（文案 + 描述）。
+                    modifier = Modifier.clearAndSetSemantics { },
+                ) {
                     Icon(painterResource(AuroraIcons.Search), null, tint = c.textDisabled,
                         modifier = Modifier.size(18.dp))
                     Text("搜索或输入网址", color = c.textDisabled)
@@ -106,7 +119,7 @@ fun HomeScreen(
                         .padding(AuroraSpacing.m),
                     horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.m),
                 ) {
-                    Box(modifier = Modifier.size(width = 88.dp, height = 66.dp)
+                    Box(modifier = Modifier.size(width = FeedThumbWidth, height = FeedThumbHeight)
                         .clip(RoundedCornerShape(AuroraRadius.s)).background(c.bgElevated))
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AuroraSpacing.xs)) {
                         Text(f.title, color = c.text, maxLines = 2)
@@ -117,7 +130,7 @@ fun HomeScreen(
                 }
             }
         }
-        item { Spacer(Modifier.height(96.dp)) }   // 给悬浮工具栏留出空间，避免遮挡内容
+        item { Spacer(Modifier.height(BottomToolbarClearance)) }   // 给悬浮工具栏留出空间，避免遮挡内容
     }
 }
 

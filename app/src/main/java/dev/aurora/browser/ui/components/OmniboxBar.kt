@@ -35,6 +35,9 @@ fun OmniboxBar(
     modifier: Modifier = Modifier,
     trailingIcon: Int = AuroraIcons.Refresh,   // 加载中传 AuroraIcons.Close
     placeholder: String = "搜索或输入网址",
+    // 书签星标：非 null 才渲染。null 用于没有网页的场合（主页/无痕首页）。
+    bookmarked: Boolean? = null,
+    onToggleBookmark: (() -> Unit)? = null,
 ) {
     val c = Aurora.colors
     val blank = displayUrl.isBlank()
@@ -93,6 +96,29 @@ fun OmniboxBar(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (bookmarked != null && onToggleBookmark != null) {
+            Box(
+                modifier = Modifier
+                    .size(AuroraSpacing.touchTarget)
+                    .clip(CircleShape)
+                    .clickable(
+                        role = Role.Button,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onToggleBookmark,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(AuroraIcons.Star),
+                    contentDescription = if (bookmarked) "取消收藏" else "收藏",
+                    // 已收藏用品牌色实心星；未收藏用 textSecondary 而不是 textDisabled
+                    // ——它不是禁用控件，禁用色会读成「不可点」。
+                    tint = if (bookmarked) c.brand else c.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
         Box(
             modifier = Modifier
                 .size(AuroraSpacing.touchTarget)
@@ -125,8 +151,14 @@ fun hostOf(url: String?): String {
 }
 
 /**
- * 按 scheme 判定站点安全态。本期输入只有 http/https；
- * 证书异常（WARNING）要等 M3 接入 `WebViewClient.onReceivedSslError` 才能产生。
+ * 按 scheme 判定站点安全态。
+ *
+ * `sslWarning` 优先：证书异常由 `WebViewClient.onReceivedSslError` 报上来（连接已被取消），
+ * 此时地址栏必须显示警告态而不是「安全」。
+ * scheme 比较不区分大小写——`HTTPS://` 也是 HTTPS，按原样比较会误报「不安全」。
  */
-fun securityOf(url: String?): SiteSecurity =
-    if (url != null && url.startsWith("https://")) SiteSecurity.SECURE else SiteSecurity.INSECURE
+fun securityOf(url: String?, sslWarning: Boolean = false): SiteSecurity = when {
+    sslWarning -> SiteSecurity.WARNING
+    url?.lowercase()?.startsWith("https://") == true -> SiteSecurity.SECURE
+    else -> SiteSecurity.INSECURE
+}

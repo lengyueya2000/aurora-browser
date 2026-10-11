@@ -57,6 +57,12 @@ object AuroraIcons {
         "arrow-clockwise" to Refresh, "clipboard-text" to Clipboard,
     )
 
+    /**
+     * 已登记的全部图标名。`tools/phosphor_to_drawable.mjs` 与图标测试都读它，
+     * 避免「设计稿加了图标、生成脚本和测试没跟上」这类静默漂移。
+     */
+    val names: Set<String> get() = byName.keys
+
     /** @throws IllegalArgumentException 当图标名不存在时——静默返回 0 会让图标消失且难以排查。 */
     @DrawableRes
     fun of(name: String): Int =

@@ -66,4 +66,45 @@ class OmniboxBarTest {
         assertThat(securityOf("http://a.com")).isEqualTo(SiteSecurity.INSECURE)
         assertThat(securityOf(null)).isEqualTo(SiteSecurity.INSECURE)
     }
+
+    /** scheme 比较不区分大小写；证书异常优先于 scheme。 */
+    @Test fun securityOfIsCaseInsensitiveAndHonoursSslWarning() {
+        assertThat(securityOf("HTTPS://A.com")).isEqualTo(SiteSecurity.SECURE)
+        assertThat(securityOf("https://a.com", sslWarning = true)).isEqualTo(SiteSecurity.WARNING)
+        assertThat(securityOf(null, sslWarning = true)).isEqualTo(SiteSecurity.WARNING)
+    }
+
+    @Test fun unbookmarkedPageOffersToBookmark() {
+        var toggles = 0
+        compose.setContent {
+            AuroraTheme {
+                OmniboxBar(
+                    "a.com", SiteSecurity.SECURE, {}, {},
+                    bookmarked = false, onToggleBookmark = { toggles++ },
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("收藏").performClick()
+        assertThat(toggles).isEqualTo(1)
+    }
+
+    @Test fun bookmarkedPageOffersToRemoveTheBookmark() {
+        compose.setContent {
+            AuroraTheme {
+                OmniboxBar(
+                    "a.com", SiteSecurity.SECURE, {}, {},
+                    bookmarked = true, onToggleBookmark = {},
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("取消收藏").assertExists()
+    }
+
+    /** 没接书签回调时不摆星标——不可用的控件比没有控件更糟。 */
+    @Test fun noBookmarkStarWithoutCallback() {
+        compose.setContent {
+            AuroraTheme { OmniboxBar("a.com", SiteSecurity.SECURE, {}, {}) }
+        }
+        compose.onNodeWithContentDescription("收藏").assertDoesNotExist()
+    }
 }

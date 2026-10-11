@@ -39,12 +39,14 @@ class TabSwitcherScreenTest {
     private fun render(
         onSelect: (String) -> Unit = {}, onClose: (String) -> Unit = {},
         onNewTab: () -> Unit = {}, onCloseAll: () -> Unit = {}, onDone: () -> Unit = {},
+        onNewIncognitoTab: () -> Unit = {},
     ) = compose.setContent {
         AuroraTheme {
             TabSwitcherScreen(
                 tabs = tabs, activeId = "a",
                 onSelect = onSelect, onClose = onClose,
                 onNewTab = onNewTab, onCloseAll = onCloseAll, onDone = onDone,
+                onNewIncognitoTab = onNewIncognitoTab,
             )
         }
     }
@@ -92,6 +94,53 @@ class TabSwitcherScreenTest {
         render(onCloseAll = { n++ })
         compose.onNodeWithContentDescription("关闭全部标签页").performClick()
         assertThat(n).isEqualTo(1)
+    }
+
+    @Test fun doneButtonFiresCallback() {
+        var n = 0
+        render(onDone = { n++ })
+        compose.onNodeWithContentDescription("完成").performClick()
+        assertThat(n).isEqualTo(1)
+    }
+
+    @Test fun incognitoButtonFiresCallback() {
+        var n = 0
+        render(onNewIncognitoTab = { n++ })
+        compose.onNodeWithContentDescription("新建无痕标签页").performClick()
+        assertThat(n).isEqualTo(1)
+    }
+
+    /**
+     * 视图切换此前没有任何断言：切到「列表」后卡片应换成行式布局
+     * （标题 + 域名副标题），并且仍能选中对应标签。
+     */
+    @Test fun switchingToListRendersRowsAndStillSelects() {
+        var selected: String? = null
+        render(onSelect = { selected = it })
+        // 网格态：卡片只有标题，没有域名副标题
+        compose.onNodeWithText("a.com").assertDoesNotExist()
+        compose.onNodeWithText("列表").performClick()
+        // 列表态：域名副标题出现
+        compose.onNodeWithText("a.com").assertExists()
+        compose.onNodeWithText("B 站").performClick()
+        assertThat(selected).isEqualTo("b")
+    }
+
+    /** 无痕标签在两种视图下都有可辨识标记。 */
+    @Test fun incognitoTabsAreMarked() {
+        compose.setContent {
+            AuroraTheme {
+                TabSwitcherScreen(
+                    tabs = listOf(
+                        BrowserTab("i", "https://secret.com", "秘密", isIncognito = true),
+                        BrowserTab("n", "https://a.com", "A 站"),
+                    ),
+                    activeId = "i",
+                    onSelect = {}, onClose = {}, onNewTab = {}, onCloseAll = {}, onDone = {},
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("无痕标签页").assertExists()
     }
 
     // 卡片上的关闭按钮是独立可点目标，必须满足全局约束「最小触摸目标 48×48dp」。
