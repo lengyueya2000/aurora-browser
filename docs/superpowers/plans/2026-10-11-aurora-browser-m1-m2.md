@@ -129,6 +129,12 @@ androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-
 > `version.ref = "lifecycleRuntimeKtx"` 复用向导已生成的版本号（若向导的 ref 名不同，
 > 按实际名字改）。
 
+**没有向导时**（无 Android Studio 的纯命令行环境）还要自己补上向导本来会生成的东西：
+`androidx.compose.material3:material3`（不写版本，由 BOM 管理）、`androidx.core:core-ktx`、
+`androidx.activity:activity-compose`、`androidx.lifecycle:lifecycle-runtime-ktx`，
+以及 Kotlin 2.x 必须显式应用的 `org.jetbrains.kotlin.plugin.compose` 插件
+（Kotlin 2.0 起 Compose 编译器随 Kotlin 发布，不再有 `composeOptions.kotlinCompilerExtensionVersion`）。
+
 （`compose-ui-test-*` 不写版本，由向导已配好的 Compose BOM 统一管理。）
 
 在 `app/build.gradle.kts` 中：
@@ -2798,6 +2804,7 @@ git commit -m "feat(browser): add tab switcher with grid and list layouts"
 - Create: `app/src/main/java/dev/aurora/browser/ui/browser/BrowserScreen.kt`
 - Modify: `app/src/main/java/dev/aurora/browser/MainActivity.kt`
 - Test: `app/src/test/java/dev/aurora/browser/ui/browser/OmniboxScreenTest.kt`
+- Test: `app/src/test/java/dev/aurora/browser/ui/browser/BrowserScreenTest.kt`
 - Test: `app/src/test/java/dev/aurora/browser/ui/home/HomeScreenTest.kt`
 
 **Interfaces:**
@@ -2960,10 +2967,83 @@ class HomeScreenTest {
 }
 ```
 
+`BrowserScreenTest.kt`：
+
+顶层组装的自动化替身。原计划把 `BrowserScreen` 交给手动冒烟验证，但手动验证跑不了 CI、
+也跑不进 subagent——这里用 Robolectric 覆盖它的可见性规则。默认标签是空白新标签页，
+所以这几条路径都不会创建 `WebView`，在 Robolectric 下是确定性的。
+
+```kotlin
+package dev.aurora.browser.ui.browser
+
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import com.google.common.truth.Truth.assertThat
+import dev.aurora.browser.ui.theme.AuroraTheme
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class BrowserScreenTest {
+    @get:Rule val compose = createComposeRule()
+
+    private fun render(vm: BrowserViewModel) {
+        compose.setContent { AuroraTheme { BrowserScreen(vm = vm) } }
+    }
+
+    @Test fun homeSurfaceShowsToolbarWithTabCount() {
+        render(BrowserViewModel())
+        compose.onNodeWithContentDescription("主页").assertExists()
+        compose.onNodeWithContentDescription("标签页，1 个").assertExists()
+    }
+
+    @Test fun omniboxSurfaceHidesFloatingToolbar() {
+        val vm = BrowserViewModel()
+        render(vm)
+        vm.openOmnibox()
+        compose.onNodeWithContentDescription("地址栏输入").assertExists()
+        compose.onNodeWithContentDescription("主页").assertDoesNotExist()
+    }
+
+    @Test fun tabSwitcherHidesFloatingToolbar() {
+        val vm = BrowserViewModel()
+        render(vm)
+        vm.openTabSwitcher()
+        compose.onNodeWithText("网格").assertExists()
+        compose.onNodeWithContentDescription("主页").assertDoesNotExist()
+    }
+
+    @Test fun menuSheetOffersOnlyMilestoneTwoActions() {
+        val vm = BrowserViewModel()
+        render(vm)
+        vm.openMenu()
+        compose.onNodeWithText("新建标签页").assertExists()
+        compose.onNodeWithText("刷新").assertExists()
+        compose.onNodeWithText("关闭全部标签页").assertExists()
+        compose.onNodeWithText("标签页数量").assertExists()
+    }
+
+    @Test fun menuSheetNewTabRowClosesTheSheetAndAddsATab() {
+        val vm = BrowserViewModel()
+        render(vm)
+        vm.openMenu()
+        compose.onNodeWithText("新建标签页").performClick()
+        compose.onNodeWithText("新建标签页").assertDoesNotExist()
+        assertThat(vm.tabsState.value).hasSize(2)
+    }
+}
+```
+
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.browser.OmniboxScreenTest" --tests "dev.aurora.browser.ui.home.HomeScreenTest"`
-Expected: 编译失败 —— `Unresolved reference: OmniboxScreen` / `HomeScreen`
+Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.browser.OmniboxScreenTest" --tests "dev.aurora.browser.ui.browser.BrowserScreenTest" --tests "dev.aurora.browser.ui.home.HomeScreenTest"`
+Expected: 编译失败 —— `Unresolved reference: OmniboxScreen` / `BrowserScreen` / `HomeScreen`
 
 - [ ] **Step 3: 实现 OmniboxScreen**
 
@@ -3363,6 +3443,8 @@ fun BrowserScreen(
     val context = LocalContext.current
     val controller = remember { MutableBrowserController() }
     var progress by remember { mutableIntStateOf(0) }
+    // 标签网格与菜单面板都要「关闭全部」，收成一个 lambda 免得两处漂移。
+    val closeAllTabs = { tabs.forEach { t -> vm.closeTab(t.id) } }
 
     BackHandler(enabled = true) {
         when (vm.onBack(canGoBack = controller.canGoBack())) {
@@ -3436,13 +3518,15 @@ fun BrowserScreen(
                 BrowserSurface.TabSwitcher -> TabSwitcherScreen(
                     tabs = tabs, activeId = active.id,
                     onSelect = { vm.selectTab(it) }, onClose = { vm.closeTab(it) },
-                    onNewTab = { vm.newTab() }, onCloseAll = { tabs.forEach { t -> vm.closeTab(t.id) } },
+                    onNewTab = { vm.newTab() }, onCloseAll = closeAllTabs,
                     onDone = { vm.closeTabSwitcher() },
                 )
             }
 
-            // 悬浮工具栏常驻底部（除标签页界面自身已有操作栏）
-            if (surface != BrowserSurface.TabSwitcher) {
+            // 悬浮工具栏只在网页/主页态常驻。地址栏聚焦态底部是系统键盘（规格屏 02），
+            // 标签网格自带操作栏（规格屏 04/05），两者都不该再叠一层工具栏。
+            // 菜单面板打开时工具栏仍在，但会被面板遮罩盖住（规格屏 06）。
+            if (surface == BrowserSurface.Page) {
                 BottomToolbar(
                     tabCount = tabs.size,
                     canGoBack = controller.canGoBack(),
@@ -3487,7 +3571,7 @@ fun BrowserScreen(
                 )
                 SettingRow(
                     title = "关闭全部标签页", icon = AuroraIcons.Trash,
-                    onClick = { tabs.forEach { t -> vm.closeTab(t.id) } },
+                    onClick = closeAllTabs,
                 )
                 SettingRow(
                     title = "标签页数量", icon = AuroraIcons.Tabs,
@@ -3562,16 +3646,15 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 6: 跑全部测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL，全部任务累计 63 tests passed
+Expected: BUILD SUCCESSFUL，全部任务累计 68 tests passed
 
-> 本任务新增的 `OmniboxScreenTest`（4 例）与 `HomeScreenTest`（4 例）共 8 例；
-> 加上前 11 个任务的 55 例，合计 63 例。
+> 本任务新增的 `OmniboxScreenTest`（4 例）、`HomeScreenTest`（4 例）、`BrowserScreenTest`（5 例）
+> 共 13 例；加上前 11 个任务的 55 例，合计 68 例。
 
 - [ ] **Step 7: 手动冒烟验证**
 
-`BrowserScreen` 本身没有单元测试：它持有 `viewModel()` 与真实 `WebView`，
-在 Robolectric 下要么起不来要么测的是空壳。它的正确性由这一步的手动冒烟覆盖，
-状态逻辑已由 `BrowserViewModelTest`（Task 10）单独覆盖。
+`BrowserScreenTest` 已覆盖可见性规则；这一步验证的是它测不到的部分——真实 WebView、
+系统键盘、手势条避让。需要一台设备或模拟器。
 
 Run: `./gradlew :app:installDebug` 后启动应用，确认：
 1. 启动落在主页，快捷入口与信息流可见，底部悬浮工具栏完整不被手势条遮挡；
