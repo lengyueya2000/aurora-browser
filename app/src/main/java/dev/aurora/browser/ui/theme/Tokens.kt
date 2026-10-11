@@ -50,6 +50,4 @@ object AuroraMotion {
     const val BASE = 200
     const val SLOW = 320
     val standard = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-    /** 返回系统是否要求移除动画时应采用的时长（0 表示即时）。 */
-    fun duration(base: Int, animationsEnabled: Boolean): Int = if (animationsEnabled) base else 0
 }
