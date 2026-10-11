@@ -1270,10 +1270,12 @@ package dev.aurora.browser.ui.components
 
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.height
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.ui.theme.AuroraTheme
 import org.junit.Rule
@@ -1339,6 +1341,23 @@ class PanelComponentsTest {
         compose.onNodeWithContentDescription("关闭面板").performClick()
         assertThat(dismissed).isEqualTo(1)
     }
+
+    // 每个分段都是独立可点目标，必须满足全局约束「最小触摸目标 48×48dp」。
+    @Test fun segmentedControlSegmentsMeetTouchTarget() {
+        compose.setContent {
+            AuroraTheme {
+                SegmentedControl(
+                    options = listOf("grid" to "网格", "list" to "列表"),
+                    selected = "grid",
+                    onSelect = {},
+                )
+            }
+        }
+        for (label in listOf("网格", "列表")) {
+            val h = compose.onNodeWithText(label).getUnclippedBoundsInRoot().height
+            assertThat(h.value).isAtLeast(48f)
+        }
+    }
 }
 ```
 
@@ -1359,7 +1378,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -1532,7 +1550,9 @@ fun <T> SegmentedControl(
             val isOn = value == selected
             Box(
                 modifier = Modifier
-                    .heightIn(min = 36.dp)
+                    // 48dp 而非紧凑的 36dp：每个分段都是独立可点目标，须满足
+                    // 全局约束「最小触摸目标 48×48dp」。
+                    .heightIn(min = AuroraSpacing.touchTarget)
                     .clip(RoundedCornerShape(AuroraRadius.full))
                     .background(if (isOn) c.surface else c.bgElevated)
                     .semantics { this.selected = isOn }
@@ -1622,7 +1642,7 @@ fun AuroraBottomSheet(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.components.PanelComponentsTest"`
-Expected: BUILD SUCCESSFUL，5 tests passed
+Expected: BUILD SUCCESSFUL，6 tests passed
 
 - [ ] **Step 5: 提交**
 
@@ -3699,10 +3719,10 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 6: 跑全部测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL，全部任务累计 71 tests passed
+Expected: BUILD SUCCESSFUL，全部任务累计 72 tests passed
 
 > 本任务新增的 `OmniboxScreenTest`（4 例）、`HomeScreenTest`（4 例）、`BrowserScreenTest`（5 例）
-> 共 13 例；加上前 11 个任务的 58 例，合计 71 例。
+> 共 13 例；加上前 11 个任务的 59 例，合计 72 例。
 
 - [ ] **Step 7: 手动冒烟验证**
 
