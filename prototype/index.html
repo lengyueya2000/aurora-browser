@@ -1196,7 +1196,7 @@ LazyColumn(<br>
         </div>
         <div class="stg-h">关于</div>
         <div class="stg-group">
-          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.6.0</span></div>
+          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.7.0</span></div>
           <div class="lrow"><span class="ic" data-i="link-simple" data-s="20"></span><span class="lb">开源许可</span><span class="go" data-i="caret-right" data-s="16"></span></div>
         </div>
       </div>
@@ -1277,8 +1277,11 @@ LazyColumn(<br>
   .pl-box{position:relative;aspect-ratio:16/9;overflow:hidden;
     background:radial-gradient(120% 90% at 30% 20%, #334155 0%, #0B1120 72%)}
   .pl-scrim{position:absolute;inset:0;background:rgba(2,6,23,.72)}
-  .pl-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:8px;padding:8px}
-  .pl-title{font-size:13px;color:var(--color-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pl-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:8px;padding:8px 12px}
+  .pl-title{font-size:13px;color:var(--color-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    flex:1;min-width:0;max-width:60%}
+  .pl-topr{display:flex;gap:8px;margin-left:auto}
+  .pl-right{position:absolute;right:12px;top:50%;transform:translateY(-50%)}
   .pl-mid{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);
     display:flex;align-items:center;justify-content:center;gap:20px}
   .pl-tb{width:34px;height:34px;border-radius:var(--radius-full);display:grid;place-items:center;
@@ -1293,7 +1296,7 @@ LazyColumn(<br>
   .pl-track i{position:absolute;left:0;top:0;bottom:0;width:38%;border-radius:var(--radius-full);background:var(--color-brand)}
   .pl-track b{position:absolute;left:38%;top:50%;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;
     border-radius:var(--radius-full);background:var(--color-brand)}
-  .pl-chips{display:flex;gap:8px;margin-top:10px}
+  .pl-chips{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
   .pl-chip{height:26px;line-height:26px;padding:0 12px;border-radius:var(--radius-full);
     font-size:12px;color:var(--color-text);background:rgba(27,35,54,.72)}
   .pl-chip.on{color:var(--color-brand);background:rgba(39,47,66,.9)}
@@ -1302,8 +1305,8 @@ LazyColumn(<br>
   .pl-hint .h2{font-size:11px;color:var(--color-text-muted);margin-top:2px}
 </style>
 <div class="frame-wrap">
-  <div class="frame-cap"><span class="n">14</span><span class="t">播放器控制层 · 清晰度 / 倍速 / 画面比例 / 手势</span>
-    <span class="d">3.5 秒无操作自动隐藏；左半屏调亮度、右半屏调音量</span></div>
+  <div class="frame-cap"><span class="n">14</span><span class="t">播放器控制层 · 小窗 / 投屏 / 下载 / 清晰度 / 倍速 / 画面比例</span>
+    <span class="d">按钮按单手能够到的位置排：右上 小窗·投屏，右侧中间 下载，右下 倍速·画质·适应·退出全屏</span></div>
   <div class="phone">
     <div class="statusbar"><span>9:41</span>
       <span class="sb-right">
@@ -1316,9 +1319,10 @@ LazyColumn(<br>
       <div class="pl-box">
         <div class="pl-scrim"></div>
         <div class="pl-top">
-          <span class="ic" data-i="arrow-left" data-s="22" style="color:var(--color-text)"></span>
           <span class="pl-title">功夫女足 · 第 1 集</span>
+          <span class="pl-topr"><span class="pl-chip">小窗</span><span class="pl-chip">投屏</span></span>
         </div>
+        <div class="pl-right"><span class="pl-chip">下载</span></div>
         <div class="pl-mid">
           <span class="pl-tb">−10s</span><span class="pl-play"></span><span class="pl-tb">+10s</span>
         </div>
@@ -1330,6 +1334,7 @@ LazyColumn(<br>
             <span class="pl-chip">1.0x</span>
             <span class="pl-chip on">1080P</span>
             <span class="pl-chip">适应</span>
+            <span class="pl-chip">退出全屏</span>
           </div>
         </div>
       </div>
@@ -1337,7 +1342,8 @@ LazyColumn(<br>
         <div class="pl-hint">
           <div class="h1">亮度 62%</div><div class="h2">左半屏上下滑调亮度</div>
         </div>
-        <div class="vf-note" style="margin:12px 0 0">清晰度面板列出 <code>master.m3u8</code> 里的各档（1080P / 720P / 480P），选「自动」交回播放器按网速自己切。同一清晰度有多条轨道（avc1 与 hevc）时只留码率最高的那条——否则面板上会出现一排「1080P」。</div>
+        <div class="vf-note" style="margin:12px 0 0">位置：<b>右上角</b>小窗 / 投屏（都是「把画面交出去」），<b>右侧中间</b>下载（单独一列，不与中间的播放键抢位置），<b>右下角</b>一排倍速 · 画质 · 适应 · 退出全屏（拇指自然落点），底部进度条占满宽度。小窗宽高比先夹到系统允许的 1/2.39–2.39——竖屏短剧的比例会越界，越界时系统直接抛异常，真机上表现为「点了没反应」；小窗里控制层与手势整层让开，否则会盖住系统的展开/关闭按钮。</div>
+        <div class="vf-note" style="margin:8px 0 0">清晰度面板列出 <code>master.m3u8</code> 里的各档（1080P / 720P / 480P），选「自动」交回播放器按网速自己切。同一清晰度有多条轨道（avc1 与 hevc）时只留码率最高的那条——否则面板上会出现一排「1080P」。</div>
         <div class="vf-note" style="margin:8px 0 16px">手势：左半屏上下滑调亮度、右半屏调音量、横向拖看进度（拖动中只预览，抬手才跳）、双击左右半屏进退 10 秒、单击显隐控制层。播放进度与倍速都会记住，下次接着看——看得不足 5 秒或离结尾不足 30 秒不记。</div>
       </div>
     </div>

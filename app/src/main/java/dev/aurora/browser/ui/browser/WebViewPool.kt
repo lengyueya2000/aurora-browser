@@ -18,17 +18,9 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import dev.aurora.browser.BuildConfig
+import dev.aurora.browser.data.DownloadRequest
 import dev.aurora.browser.media.MediaSniffer
 import java.io.ByteArrayInputStream
-
-/** WebView 触发的下载请求，交给 UI 层入队（DownloadManager 需要 Context）。 */
-data class DownloadRequest(
-    val url: String,
-    val userAgent: String?,
-    val contentDisposition: String?,
-    val mimeType: String?,
-    val contentLength: Long,
-)
 
 /**
  * 每个标签页一个 `WebView`。

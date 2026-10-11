@@ -65,11 +65,14 @@
         <!--
           内置播放器。configChanges 必须全列上：转屏、隐藏系统栏都会让 Activity 重建，
           一重建 ExoPlayer 就被销毁，画面回到第 0 秒——用户看到的是「一转屏就从头播」。
+          supportsPictureInPicture 是「小窗播放」的前提，缺了它 enterPictureInPictureMode
+          一律返回 false。
         -->
         <activity
             android:name=".media.PlayerActivity"
             android:exported="false"
             android:launchMode="singleTop"
+            android:supportsPictureInPicture="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|fontScale|layoutDirection|locale|touchscreen|colorMode|grammaticalGender|fontWeightAdjustment"
             android:theme="@style/Theme.Aurora" />
 

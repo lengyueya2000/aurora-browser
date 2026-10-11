@@ -8,7 +8,6 @@ import android.content.Intent
 import android.net.Uri
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.webkit.WebSettings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -57,6 +56,7 @@ import dev.aurora.browser.BuildConfig
 import dev.aurora.browser.data.DownloadItem
 import dev.aurora.browser.data.DownloadsRepository
 import dev.aurora.browser.domain.BackOutcome
+import dev.aurora.browser.media.MediaDownload
 import dev.aurora.browser.media.MediaUrls
 import dev.aurora.browser.media.OfflineItem
 import dev.aurora.browser.media.OfflineMedia
@@ -159,29 +159,24 @@ fun BrowserScreen(
     /**
      * 开始下载一个已经解析好的地址。
      *
-     * 浮层按钮和主菜单两处都用它：两条路都得先判断是直链还是播放列表，各写一遍迟早漂移。
-     * 返回 true 表示已经入队。
+     * 浮层按钮和主菜单两处都用它；「直链还是播放列表」的分岔在 [MediaDownload] 里，
+     * 内置播放器里的下载按钮走同一份判断。
      */
     val startDownload: (url: String, title: String) -> Boolean = { url, title ->
+        val result = MediaDownload.enqueue(
+            context = context,
+            url = url,
+            title = title,
+            referer = active.url,
+            downloads = downloads,
+        )
+        vm.showMessage(result.message)
         if (MediaUrls.isPlaylist(url)) {
-            // HLS/DASH 是一堆分片：交给 Media3 的离线缓存，下完能离线播。
-            OfflineMedia.enqueue(context, url, title)
             offlineItems = OfflineMedia.items(context)
-            vm.showMessage("已开始离线缓存，可在「下载管理」里离线观看")
-            true
         } else {
-            val request = DownloadRequest(
-                url = url,
-                userAgent = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull(),
-                contentDisposition = null,
-                mimeType = null,
-                contentLength = -1L,
-            )
-            val id = downloads.enqueue(request, referer = active.url)
-            vm.showMessage(if (id != null) "已开始下载" else "无法开始下载")
             downloadItems = downloads.query()
-            id != null
         }
+        result.started
     }
 
     // 关掉的标签要连 WebView 一起释放，否则池里会留着看不见的实例（内存 + 后台 JS）。

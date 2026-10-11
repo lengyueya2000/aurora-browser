@@ -6,7 +6,15 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Environment
 import android.webkit.URLUtil
-import dev.aurora.browser.ui.browser.DownloadRequest
+
+/** 交给 `DownloadManager` 的一次下载请求。 */
+data class DownloadRequest(
+    val url: String,
+    val userAgent: String?,
+    val contentDisposition: String?,
+    val mimeType: String?,
+    val contentLength: Long,
+)
 
 /** 一条下载记录。`status` 是 `DownloadManager.STATUS_*`。 */
 data class DownloadItem(

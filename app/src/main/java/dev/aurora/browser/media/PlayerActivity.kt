@@ -1,11 +1,14 @@
 package dev.aurora.browser.media
 
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.media.AudioManager
 import android.os.Bundle
+import android.util.Rational
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -15,7 +18,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -53,11 +55,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -84,7 +84,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import dev.aurora.browser.ui.icons.AuroraIcons
+import dev.aurora.browser.ui.cast.CastController
 import dev.aurora.browser.ui.theme.Aurora
 import dev.aurora.browser.ui.theme.AuroraRadius
 import dev.aurora.browser.ui.theme.AuroraSpacing
@@ -114,9 +114,18 @@ class PlayerActivity : ComponentActivity() {
     private var prefs: PlaybackPreferences? = null
     private var savedCutoutMode: Int? = null
     private var mediaUrl: String = ""
+    private var mediaTitle: String = ""
+    private var mediaReferer: String? = null
 
     /** 方向只根据视频宽高定一次，之后不再抢用户自己的旋转。 */
     private var orientationDecided = false
+
+    /** 真实视频尺寸：小窗的宽高比要用它。 */
+    private var videoWidth = 0
+    private var videoHeight = 0
+
+    /** 是否正处在小窗里。小窗里要把控制层与手势全部让开，否则会盖住系统的展开/关闭按钮。 */
+    private val inPip = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,6 +137,8 @@ class PlayerActivity : ComponentActivity() {
         mediaUrl = url
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
         val referer = intent.getStringExtra(EXTRA_REFERER)?.takeIf { it.isNotBlank() }
+        mediaTitle = title.ifBlank { url }
+        mediaReferer = referer
         val preferences = PlaybackPreferences.create(this)
         prefs = preferences
 
@@ -180,11 +191,15 @@ class PlayerActivity : ComponentActivity() {
             AuroraTheme {
                 PlayerScreen(
                     player = exo,
-                    title = title.ifBlank { url },
+                    title = mediaTitle,
                     trackSelector = selector,
                     initialSpeed = preferences.speed(),
+                    pip = inPip.value,
                     onSpeedChanged = { preferences.rememberSpeed(it) },
                     onEnded = { preferences.forget(url) },
+                    onPip = { enterPip() },
+                    onCast = { castVideo() },
+                    onDownload = { downloadVideo() },
                     onExit = { finish() },
                     onVideoSize = { size -> applyOrientationFor(size) },
                     onError = { error ->
@@ -204,6 +219,10 @@ class PlayerActivity : ComponentActivity() {
 
     /** 竖屏短剧掰成横屏同样是错的，所以等真实宽高出来再定方向，而且只定一次。 */
     private fun applyOrientationFor(size: VideoSize) {
+        if (size.width > 0 && size.height > 0) {
+            videoWidth = size.width
+            videoHeight = size.height
+        }
         if (orientationDecided || size.width == 0 || size.height == 0) return
         orientationDecided = true
         requestedOrientation = if (size.width >= size.height) {
@@ -211,6 +230,54 @@ class PlayerActivity : ComponentActivity() {
         } else {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
         }
+    }
+
+    /**
+     * 小窗播放。
+     *
+     * 宽高比先按 [PlayerWindow] 夹到系统允许的区间——竖屏短剧的比例会越界，
+     * 越界时系统直接抛异常，点了没反应比报错更难查。
+     */
+    private fun enterPip() {
+        val (width, height) = PlayerWindow.pipAspectRatio(videoWidth, videoHeight)
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(width, height))
+            .build()
+        val entered = runCatching { enterPictureInPictureMode(params) }.getOrDefault(false)
+        if (!entered) {
+            Toast.makeText(this, "这个应用现在不能进小窗", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 小窗进出时系统会回调这里；小窗里把控制层让开，交给系统的展开/关闭按钮。 */
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPip.value = isInPictureInPictureMode
+    }
+
+    /**
+     * 投屏：把正在播的地址交给能接视频通配 MIME 的应用（各类投屏播放器都注册了它）。
+     * 与网页浮层的投屏走同一条路，不引入 Google Cast。
+     */
+    private fun castVideo() {
+        val ok = CastController(this).playOnDevice(mediaUrl, "video/*")
+        if (!ok) {
+            Toast.makeText(this, "没有能投屏播放该视频的应用", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 下载：直链交给系统下载器，HLS 进离线缓存——分岔在 [MediaDownload] 里。 */
+    private fun downloadVideo() {
+        val result = MediaDownload.enqueue(
+            context = this,
+            url = mediaUrl,
+            title = mediaTitle,
+            referer = mediaReferer,
+        )
+        Toast.makeText(this, result.message, Toast.LENGTH_SHORT).show()
     }
 
     /** 退到后台就停：不停的话用户切走了声音还在放。同时把进度存下来。 */
@@ -282,8 +349,12 @@ private fun PlayerScreen(
     title: String,
     trackSelector: DefaultTrackSelector,
     initialSpeed: Float,
+    pip: Boolean,
     onSpeedChanged: (Float) -> Unit,
     onEnded: () -> Unit,
+    onPip: () -> Unit,
+    onCast: () -> Unit,
+    onDownload: () -> Unit,
     onExit: () -> Unit,
     onVideoSize: (VideoSize) -> Unit,
     onError: (PlaybackException) -> Unit,
@@ -386,24 +457,26 @@ private fun PlayerScreen(
         )
 
         // 手势层铺在画面之上、控制层之下。控制层里没有点击处理的地方不消费事件，
-        // 所以控制层显示时手势照样能用。
-        GestureLayer(
-            player = player,
-            panelOpen = panel != PlayerPanel.NONE,
-            onToggleControls = { controlsVisible = !controlsVisible },
-            onClosePanel = { panel = PlayerPanel.NONE },
-            onHint = { hint = it },
-            onSeekPreview = { target ->
-                scrubbing = true
-                scrubMs = target
-            },
-            onSeekCommit = { target ->
-                player.seekTo(target)
-                scrubbing = false
-            },
-        )
+        // 所以控制层显示时手势照样能用。小窗里整层让开，否则会盖住系统的展开/关闭按钮。
+        if (!pip) {
+            GestureLayer(
+                player = player,
+                    panelOpen = panel != PlayerPanel.NONE,
+                onToggleControls = { controlsVisible = !controlsVisible },
+                onClosePanel = { panel = PlayerPanel.NONE },
+                onHint = { hint = it },
+                onSeekPreview = { target ->
+                    scrubbing = true
+                    scrubMs = target
+                },
+                onSeekCommit = { target ->
+                    player.seekTo(target)
+                    scrubbing = false
+                },
+            )
+        }
 
-        if (buffering) {
+        if (buffering && !pip) {
             CircularProgressIndicator(
                 color = Aurora.colors.brand,
                 modifier = Modifier
@@ -412,10 +485,12 @@ private fun PlayerScreen(
             )
         }
 
-        hint?.let { current -> GestureHintOverlay(current, Modifier.align(Alignment.Center)) }
+        if (!pip) {
+            hint?.let { current -> GestureHintOverlay(current, Modifier.align(Alignment.Center)) }
+        }
 
         AnimatedVisibility(
-            visible = controlsVisible,
+            visible = controlsVisible && !pip,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize(),
@@ -461,6 +536,9 @@ private fun PlayerScreen(
                     resizeMode = mode
                     panel = PlayerPanel.NONE
                 },
+                onPip = onPip,
+                onCast = onCast,
+                onDownload = onDownload,
                 onExit = onExit,
             )
         }
@@ -576,7 +654,11 @@ private fun GestureLayer(
     )
 }
 
-/** 控制层：顶部标题与返回，中间播放/暂停与 ±10 秒，底部进度与三个二级面板。 */
+/**
+ * 控制层。位置按真机使用习惯排：
+ * 右上角放「小窗 / 投屏」（都是把画面交出去的动作），右侧中间放「下载」，
+ * 右下角一排是「倍速 / 画质 / 适应 / 退出全屏」，中间留播放/暂停与 ±10 秒，底部是进度。
+ */
 @Composable
 private fun PlayerControls(
     title: String,
@@ -598,50 +680,45 @@ private fun PlayerControls(
     onSpeed: (Float) -> Unit,
     onQuality: (PlayerQuality.Option?) -> Unit,
     onResize: (Int) -> Unit,
+    onPip: () -> Unit,
+    onCast: () -> Unit,
+    onDownload: () -> Unit,
     onExit: () -> Unit,
 ) {
     val colors = Aurora.colors
 
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
             .background(colors.scrim),
     ) {
+        Text(
+            text = title,
+            color = colors.text,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.m)
+                .fillMaxWidth(0.6f),
+        )
+
+        // 右上角：把画面交出去的两个动作。
         Row(
             Modifier
-                .fillMaxWidth()
-                .padding(horizontal = AuroraSpacing.xs, vertical = AuroraSpacing.xs),
+                .align(Alignment.TopEnd)
+                .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.s),
+            horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.s),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier
-                    .size(AuroraSpacing.touchTarget)
-                    .clickable(onClick = onExit),
-                contentAlignment = Alignment.Center,
-            ) {
-                Image(
-                    painter = painterResource(AuroraIcons.Back),
-                    contentDescription = "退出全屏",
-                    colorFilter = ColorFilter.tint(colors.text),
-                    modifier = Modifier.size(22.dp),
-                )
-            }
-            Text(
-                text = title,
-                color = colors.text,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
+            ControlChip("小窗", active = false, onClick = onPip)
+            ControlChip("投屏", active = false, onClick = onCast)
         }
 
-        Spacer(Modifier.weight(1f))
-
         Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
+            Modifier.align(Alignment.Center),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextTransportButton("−10s", "后退 10 秒", colors.text) {
@@ -662,85 +739,104 @@ private fun PlayerControls(
             }
         }
 
-        Spacer(Modifier.weight(1f))
-
-        if (panel != PlayerPanel.NONE) {
-            PlayerPanelContent(
-                panel = panel,
-                speed = speed,
-                selectedQuality = selectedQuality,
-                resizeMode = resizeMode,
-                qualityOptions = qualityOptions,
-                onSpeed = onSpeed,
-                onQuality = onQuality,
-                onResize = onResize,
-            )
+        // 右侧中间：下载。单独占一列，不与中间的播放控制抢位置。
+        Box(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = AuroraSpacing.m),
+        ) {
+            ControlChip("下载", active = false, onClick = onDownload)
         }
 
-        Row(
+        Column(
             Modifier
-                .fillMaxWidth()
-                .padding(horizontal = AuroraSpacing.m),
-            verticalAlignment = Alignment.CenterVertically,
+                .align(Alignment.BottomStart)
+                .fillMaxWidth(),
         ) {
-            Text(
-                PlayerGestures.formatTime(positionMs),
-                color = colors.textSecondary,
-                fontSize = 12.sp,
-            )
-            // 拖动中的比例由这里自己记：Slider 的 onValueChangeFinished 不给最终值，
-            // 而回调闭包里读不到同一帧刚更新的外部状态。
-            var dragging by remember { mutableStateOf(false) }
-            var fraction by remember { mutableFloatStateOf(0f) }
-            val shown = when {
-                dragging -> fraction
-                durationMs > 0L -> (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
-                else -> 0f
+            if (panel != PlayerPanel.NONE) {
+                PlayerPanelContent(
+                    panel = panel,
+                    speed = speed,
+                    selectedQuality = selectedQuality,
+                    resizeMode = resizeMode,
+                    qualityOptions = qualityOptions,
+                    onSpeed = onSpeed,
+                    onQuality = onQuality,
+                    onResize = onResize,
+                )
             }
-            Slider(
-                value = shown,
-                onValueChange = { value ->
-                    dragging = true
-                    fraction = value
-                    onScrub(value)
-                },
-                onValueChangeFinished = {
-                    onScrubEnd(fraction)
-                    dragging = false
-                },
-                colors = SliderDefaults.colors(
-                    thumbColor = colors.brand,
-                    activeTrackColor = colors.brand,
-                    inactiveTrackColor = colors.border,
-                ),
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = AuroraSpacing.s),
-            )
-            Text(
-                PlayerGestures.formatTime(durationMs),
-                color = colors.textSecondary,
-                fontSize = 12.sp,
-            )
-        }
 
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.s),
-            horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.s),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ControlChip(PlayerGestures.speedLabel(speed), panel == PlayerPanel.SPEED) {
-                onPanel(if (panel == PlayerPanel.SPEED) PlayerPanel.NONE else PlayerPanel.SPEED)
-            }
-            if (hasQualityChoice) {
-                ControlChip(qualityLabel, panel == PlayerPanel.QUALITY) {
-                    onPanel(if (panel == PlayerPanel.QUALITY) PlayerPanel.NONE else PlayerPanel.QUALITY)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = AuroraSpacing.m),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    PlayerGestures.formatTime(positionMs),
+                    color = colors.textSecondary,
+                    fontSize = 12.sp,
+                )
+                // 拖动中的比例由这里自己记：Slider 的 onValueChangeFinished 不给最终值，
+                // 而回调闭包里读不到同一帧刚更新的外部状态。
+                var dragging by remember { mutableStateOf(false) }
+                var fraction by remember { mutableFloatStateOf(0f) }
+                val shown = when {
+                    dragging -> fraction
+                    durationMs > 0L -> (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+                    else -> 0f
                 }
+                Slider(
+                    value = shown,
+                    onValueChange = { value ->
+                        dragging = true
+                        fraction = value
+                        onScrub(value)
+                    },
+                    onValueChangeFinished = {
+                        onScrubEnd(fraction)
+                        dragging = false
+                    },
+                    colors = SliderDefaults.colors(
+                        thumbColor = colors.brand,
+                        activeTrackColor = colors.brand,
+                        inactiveTrackColor = colors.border,
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = AuroraSpacing.s),
+                )
+                Text(
+                    PlayerGestures.formatTime(durationMs),
+                    color = colors.textSecondary,
+                    fontSize = 12.sp,
+                )
             }
-            ControlChip(resizeLabel(resizeMode), panel == PlayerPanel.RESIZE) {
-                onPanel(if (panel == PlayerPanel.RESIZE) PlayerPanel.NONE else PlayerPanel.RESIZE)
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.s),
+                horizontalArrangement = Arrangement.spacedBy(
+                    AuroraSpacing.s,
+                    Alignment.End,
+                ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ControlChip(PlayerGestures.speedLabel(speed), panel == PlayerPanel.SPEED) {
+                    onPanel(if (panel == PlayerPanel.SPEED) PlayerPanel.NONE else PlayerPanel.SPEED)
+                }
+                if (hasQualityChoice) {
+                    ControlChip(qualityLabel, panel == PlayerPanel.QUALITY) {
+                        onPanel(
+                            if (panel == PlayerPanel.QUALITY) PlayerPanel.NONE else PlayerPanel.QUALITY,
+                        )
+                    }
+                }
+                ControlChip(resizeLabel(resizeMode), panel == PlayerPanel.RESIZE) {
+                    onPanel(if (panel == PlayerPanel.RESIZE) PlayerPanel.NONE else PlayerPanel.RESIZE)
+                }
+                ControlChip("退出全屏", active = false, onClick = onExit)
             }
         }
     }
