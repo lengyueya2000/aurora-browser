@@ -2103,6 +2103,7 @@ git commit -m "feat(domain): add BackPressDispatcher with double-press exit"
 ```kotlin
 package dev.aurora.browser.ui.browser
 
+import android.content.Context
 import android.webkit.WebView
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
@@ -2112,8 +2113,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowWebView
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -2132,23 +2133,41 @@ class WebViewContainerTest {
         override fun canGoForward() = false
     }
 
+    /**
+     * 捕获容器实际创建的 WebView。Robolectric 4.14.1 没有 `getLastCreatedWebView()`，
+     * 因此走 `factory` 注入（该参数本就是为测试而留），再用 `shadowOf(web).lastLoadedUrl`
+     * 观察它收到的 URL。
+     */
+    private class WebViewFactory {
+        var created: WebView? = null
+        val factory: (Context) -> WebView = { ctx -> WebView(ctx).also { created = it } }
+    }
+
     @Test fun loadsRequestedUrlOnFirstComposition() {
         val controller = FakeController()
+        val f = WebViewFactory()
         compose.setContent {
-            AuroraTheme { WebViewContainer(controller = controller, url = "https://a.com") }
+            AuroraTheme {
+                WebViewContainer(controller = controller, url = "https://a.com", factory = f.factory)
+            }
         }
         compose.onRoot().assertExists()
         // 断言 WebView 真的被创建并收到 URL
-        val web = ShadowWebView.getLastCreatedWebView() as WebView
-        assertThat(ShadowWebView.getLastLoadedUrl()).isEqualTo("https://a.com")
+        val web = f.created
         assertThat(web).isNotNull()
+        assertThat(shadowOf(web!!).lastLoadedUrl).isEqualTo("https://a.com")
     }
 
     @Test fun blankUrlDoesNotLoadAnything() {
         val controller = FakeController()
-        compose.setContent { AuroraTheme { WebViewContainer(controller = controller, url = null) } }
+        val f = WebViewFactory()
+        compose.setContent {
+            AuroraTheme { WebViewContainer(controller = controller, url = null, factory = f.factory) }
+        }
         compose.onRoot().assertExists()
-        assertThat(ShadowWebView.getLastLoadedUrl()).isNull()
+        val web = f.created
+        assertThat(web).isNotNull()
+        assertThat(shadowOf(web!!).lastLoadedUrl).isNull()
     }
 }
 ```
@@ -2224,8 +2243,8 @@ fun WebViewContainer(
         webView.webViewClient = client
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) = onProgress(newProgress)
-            override fun onReceivedTitle(view: WebView, title: CharSequence?) =
-                onTitleChange(title?.toString().orEmpty())
+            override fun onReceivedTitle(view: WebView, title: String?) =
+                onTitleChange(title.orEmpty())
         }
         onDispose {
             webView.stopLoading()
@@ -2264,9 +2283,9 @@ interface BindableController : BrowserController {
 }
 ```
 
-> `ShadowWebView.getLastLoadedUrl()` 在 Robolectric 中记录最近一次 `loadUrl`。
-> 若该静态方法在你的 Robolectric 版本上不可用，改用
-> `Shadows.shadowOf(web).lastLoadedUrl`。两种写法二选一，不要都留着。
+> Robolectric 4.14.1 的 `ShadowWebView` 没有 `getLastCreatedWebView()` 静态方法，
+> `lastLoadedUrl` 也只能通过实例 shadow 读取，所以测试用 `factory` 注入捕获容器创建的
+> WebView，再用 `Shadows.shadowOf(web).lastLoadedUrl` 观察它收到的 URL。
 
 - [ ] **Step 4: 跑测试确认通过**
 
