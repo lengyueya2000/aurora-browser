@@ -1134,7 +1134,9 @@ fun OmniboxBar(
     Row(
         modifier = modifier
             .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.xs)
-            .height(44.dp)
+            // 48dp 而非原型的 44px：整行自身可点，它就是触摸目标，必须满足全局约束
+            // "最小触摸目标 48×48dp"；44dp 的固定高度还会把右侧 48dp 的动作按钮压到 44 高。
+            .height(AuroraSpacing.touchTarget)
             .clip(RoundedCornerShape(AuroraRadius.full))
             .background(c.surfaceHover)
             // mergeDescendants = true：整条地址栏合成一个无障碍节点，读屏一次读出
@@ -3323,7 +3325,8 @@ fun HomeScreen(
                 modifier = Modifier
                     .padding(AuroraSpacing.m)
                     .fillMaxWidth()
-                    .height(44.dp)
+                    // 同 OmniboxBar：可点元素须 ≥48dp 高，原型 44px 只是视觉稿。
+                    .height(AuroraSpacing.touchTarget)
                     .clip(RoundedCornerShape(AuroraRadius.full))
                     .background(c.surfaceHover)
                     .clickable(
