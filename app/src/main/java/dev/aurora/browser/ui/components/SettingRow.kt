@@ -54,7 +54,7 @@ fun SettingRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(text = title, color = c.text)
             if (subtitle != null) {
-                Text(text = subtitle, color = c.textDisabled, fontFamily = FontFamily.Monospace,
+                Text(text = subtitle, color = c.textMuted, fontFamily = FontFamily.Monospace,
                     style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
             }
         }

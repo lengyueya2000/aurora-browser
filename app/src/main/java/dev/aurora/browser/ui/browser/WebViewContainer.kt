@@ -105,7 +105,9 @@ fun WebViewContainer(
     }
 
     LaunchedEffect(url) {
-        if (!url.isNullOrBlank()) webView.loadUrl(url)
+        // 只加载「WebView 当前不在的地址」：onPageFinished 会把真实地址回写进 active.url，
+        // 若不加这道判断，重定向/站内跳转会因 url 变化再触发一次 loadUrl（重复加载 + 多一条历史）。
+        if (!url.isNullOrBlank() && url != webView.url) webView.loadUrl(url)
     }
 
     AndroidView(factory = { webView }, modifier = modifier)

@@ -61,4 +61,24 @@ class BrowserScreenTest {
         compose.onNodeWithText("新建标签页").assertDoesNotExist()
         assertThat(vm.tabsState.value).hasSize(2)
     }
+
+    /**
+     * FIX 1 的回归测试：Page 内容必须常驻，否则打开地址栏会把 WebView 移出组合，
+     * 其 onDispose 销毁 WebView，回到网页态只能重新加载（丢滚动位置与前进/后退历史）。
+     */
+    @Test fun pageStaysComposedWhileOmniboxIsOpen() {
+        val vm = BrowserViewModel()
+        render(vm)
+        vm.navigate("https://a.com")
+        compose.waitForIdle()
+        // 网页态：Page 分支的地址栏（OmniboxBar）在树中
+        compose.onNodeWithContentDescription("地址栏，a.com").assertExists()
+
+        vm.openOmnibox()
+        compose.waitForIdle()
+        // Page 层地址栏仍在（Page 分支未被移除）
+        compose.onNodeWithContentDescription("地址栏，a.com").assertExists()
+        // 地址栏覆盖层也在
+        compose.onNodeWithContentDescription("地址栏输入").assertExists()
+    }
 }

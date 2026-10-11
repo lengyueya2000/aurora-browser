@@ -19,7 +19,7 @@ class TabRepository {
     val activeId: StateFlow<String> = _activeId.asStateFlow()
 
     val active: BrowserTab
-        get() = _tabs.value.first { it.id == _activeId.value }
+        get() = _tabs.value.firstOrNull { it.id == _activeId.value } ?: _tabs.value.first()
 
     private fun newId(): String = UUID.randomUUID().toString()
 

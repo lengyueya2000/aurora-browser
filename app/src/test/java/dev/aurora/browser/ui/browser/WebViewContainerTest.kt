@@ -41,6 +41,23 @@ class WebViewContainerTest {
         val factory: (Context) -> WebView = { ctx -> WebView(ctx).also { created = it } }
     }
 
+    /**
+     * 计数 WebView：记录 `loadUrl` 调用次数，并单独跟踪「当前地址」。
+     * 真实 WebView 的 `getUrl()` 反映的是当前页面——重定向后它与最后一次 `loadUrl` 的请求地址
+     * 不同。这里用 `currentUrl` 复刻这一语义：`navigateWithoutLoad` 表示 WebView 自身跳转
+     * （重定向 / 站内链接），不经过 `loadUrl`。
+     * （Robolectric 的 `ShadowWebView.getUrl()` 直接返回最后一次 `loadUrl` 的地址，无法表达这种
+     *  自跳转，因此由子类接管 `getUrl()`。）
+     */
+    private class CountingWebView(ctx: Context) : WebView(ctx) {
+        var loadCount = 0
+        private var currentUrl: String? = null
+        override fun loadUrl(url: String) { loadCount++; currentUrl = url; super.loadUrl(url) }
+        override fun getUrl(): String? = currentUrl
+        /** 模拟 WebView 自身导航到某地址：不经过 `loadUrl`，只改变当前地址。 */
+        fun navigateWithoutLoad(url: String) { currentUrl = url }
+    }
+
     @Test fun loadsRequestedUrlOnFirstComposition() {
         val controller = FakeController()
         val f = WebViewFactory()
@@ -90,5 +107,51 @@ class WebViewContainerTest {
         shadowOf(web).webChromeClient.onProgressChanged(web, 42)
         assertThat(second).isEqualTo(42)
         assertThat(first).isEqualTo(-1)
+    }
+
+    /**
+     * FIX 2 的回归测试：`onPageFinished` 会把真实地址回写成 `url` 参数，若加载 effect 不加
+     * 「WebView 是否已在该地址」的守卫，重定向/站内跳转会重复 `loadUrl`（多一次加载 + 多一条历史）。
+     */
+    @Test fun doesNotReloadWhenUrlIsUnchanged() {
+        val controller = FakeController()
+        var created: CountingWebView? = null
+        val urlState = mutableStateOf("https://a.com")
+        // 无关状态：读取它可在 url 不变时强制重组，验证「纯重组不触发加载」。
+        val tick = mutableStateOf(0)
+        compose.setContent {
+            AuroraTheme {
+                tick.value
+                WebViewContainer(
+                    controller = controller,
+                    url = urlState.value,
+                    factory = { ctx -> CountingWebView(ctx).also { created = it } },
+                )
+            }
+        }
+        compose.waitForIdle()
+        val web = created!!
+        // 首次组合只加载一次
+        assertThat(web.loadCount).isEqualTo(1)
+        assertThat(web.url).isEqualTo("https://a.com")
+
+        // url 不变、仅重组：不应再次加载
+        tick.value = 1
+        compose.waitForIdle()
+        assertThat(web.loadCount).isEqualTo(1)
+
+        // 模拟重定向：WebView 自身已停在 final 地址（不经过 loadUrl），随后 onPageFinished
+        // 把该地址回写为新的 url（等价 vm.updateActiveTab）。effect 因 url 变化重跑，
+        // 但 WebView 已在该地址上——守卫必须拦下。
+        web.navigateWithoutLoad("https://a.com/final")
+        urlState.value = "https://a.com/final"
+        compose.waitForIdle()
+        assertThat(web.loadCount).isEqualTo(1)
+
+        // 切到真正不同的地址时仍应加载
+        urlState.value = "https://b.com"
+        compose.waitForIdle()
+        assertThat(web.loadCount).isEqualTo(2)
+        assertThat(web.url).isEqualTo("https://b.com")
     }
 }

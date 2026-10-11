@@ -44,7 +44,7 @@ fun OmniboxScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(AuroraSpacing.touchTarget)
                 .clip(RoundedCornerShape(AuroraRadius.m))
                 .background(c.surface)
                 .border(1.5.dp, c.brand, RoundedCornerShape(AuroraRadius.m))

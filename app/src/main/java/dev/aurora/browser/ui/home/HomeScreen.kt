@@ -153,7 +153,7 @@ private fun ShortcutTile(s: Shortcut, modifier: Modifier = Modifier, onClick: ()
         Box(
             modifier = Modifier
                 .size(52.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(AuroraRadius.m))
                 .background(c.surfaceHover),
             contentAlignment = Alignment.Center,
         ) {
