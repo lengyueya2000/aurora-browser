@@ -2,6 +2,7 @@ package dev.aurora.browser.ui.browser
 
 import android.content.Context
 import android.webkit.WebView
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import com.google.common.truth.Truth.assertThat
@@ -65,5 +66,29 @@ class WebViewContainerTest {
         val web = f.created
         assertThat(web).isNotNull()
         assertThat(shadowOf(web!!).lastLoadedUrl).isNull()
+    }
+
+    // 重组后传入的新回调必须生效：客户端不能一直调用首次组合时捕获的那个 lambda。
+    @Test fun callbacksFollowTheLatestLambdaAfterRecomposition() {
+        var first = -1
+        var second = -1
+        val useSecond = mutableStateOf(false)
+        val f = WebViewFactory()
+        compose.setContent {
+            AuroraTheme {
+                val onProgress: (Int) -> Unit =
+                    if (useSecond.value) { { second = it } } else { { first = it } }
+                WebViewContainer(
+                    controller = FakeController(), url = null,
+                    onProgress = onProgress, factory = f.factory,
+                )
+            }
+        }
+        useSecond.value = true
+        compose.waitForIdle()
+        val web = f.created!!
+        shadowOf(web).webChromeClient.onProgressChanged(web, 42)
+        assertThat(second).isEqualTo(42)
+        assertThat(first).isEqualTo(-1)
     }
 }

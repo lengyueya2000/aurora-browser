@@ -9,7 +9,9 @@ import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -59,19 +61,25 @@ fun WebViewContainer(
         }
     }
 
+    // 回调用 rememberUpdatedState 包一层：下面 DisposableEffect 的 key 只有 webView，
+    // 若直接捕获回调，重组后新传入的 lambda 会被忽略，客户端会一直调用首次组合的那个。
+    val currentOnProgress by rememberUpdatedState(onProgress)
+    val currentOnTitleChange by rememberUpdatedState(onTitleChange)
+    val currentOnUrlChange by rememberUpdatedState(onUrlChange)
+
     // 把 WebView 的进度/标题/URL 变化桥接给上层
     DisposableEffect(webView) {
         val client = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
-                onTitleChange(view.title.orEmpty())
-                onUrlChange(url)
+                currentOnTitleChange(view.title.orEmpty())
+                currentOnUrlChange(url)
             }
         }
         webView.webViewClient = client
         webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView, newProgress: Int) = onProgress(newProgress)
+            override fun onProgressChanged(view: WebView, newProgress: Int) = currentOnProgress(newProgress)
             override fun onReceivedTitle(view: WebView, title: String?) =
-                onTitleChange(title.orEmpty())
+                currentOnTitleChange(title.orEmpty())
         }
         onDispose {
             webView.stopLoading()
