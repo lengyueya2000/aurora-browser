@@ -5,9 +5,8 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.unit.dp
+// DpRect 的 width/height 是扩展属性，不是成员——缺这两个 import 测试编译不过。
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
 import com.google.common.truth.Truth.assertThat
@@ -69,6 +68,18 @@ class BottomToolbarTest {
             val b = compose.onNodeWithContentDescription(label).getUnclippedBoundsInRoot()
             assertThat(b.width.value).isAtLeast(48f)
             assertThat(b.height.value).isAtLeast(48f)
+        }
+    }
+
+    @Test fun adjacentSlotsKeepMinimumTouchGap() {
+        render()
+        val labels = listOf("后退", "前进", "主页", "标签页，3 个", "更多")
+        val bounds = labels.map {
+            compose.onNodeWithContentDescription(it).getUnclippedBoundsInRoot()
+        }
+        // DpRect 的 left/right 是成员，width 是扩展属性——两种写法别混。
+        bounds.zipWithNext { a, b ->
+            assertThat((b.left - a.right).value).isAtLeast(8f)
         }
     }
 

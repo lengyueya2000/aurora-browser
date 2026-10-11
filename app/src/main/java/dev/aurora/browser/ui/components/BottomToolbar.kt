@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -59,7 +58,7 @@ fun BottomToolbar(
             )
             .padding(horizontal = AuroraSpacing.s),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.touchGap),
     ) {
         ToolbarSlot(
             icon = AuroraIcons.Back, label = "后退",
