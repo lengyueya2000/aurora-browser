@@ -78,11 +78,13 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -118,6 +120,15 @@ class PlayerActivity : ComponentActivity() {
     private var mediaUrl: String = ""
     private var mediaTitle: String = ""
     private var mediaReferer: String? = null
+
+    /** 建源用的数据源。换源重试时要拿它重新建一次，所以留着。 */
+    private var dataSourceFactory: DataSource.Factory? = null
+
+    /** 当前是按 HLS 还是按直链建的源；[retryWithOtherSource] 会把它翻过来。 */
+    private var sourceAsHls = false
+
+    /** 换源重试只做一次：换完还失败就是真播不了，再换只会来回踢皮球。 */
+    private var sourceRetried = false
 
     /** 方向只根据视频宽高定一次，之后不再抢用户自己的旋转。 */
     private var orientationDecided = false
@@ -169,18 +180,11 @@ class PlayerActivity : ComponentActivity() {
         player = exo
 
         val dataSourceFactory = OfflineMedia.playbackDataSource(this, referer)
-        val item = MediaItem.fromUri(url)
+        this.dataSourceFactory = dataSourceFactory
         // HLS 显式建源并打开 chunkless 预解析：起播时不必先把分片清单整个拉下来
         // 才知道有几档码率。其它（直链、DASH）仍交给默认工厂。
-        exo.setMediaSource(
-            if (MediaUrls.isHls(url)) {
-                HlsMediaSource.Factory(dataSourceFactory)
-                    .setAllowChunklessPreparation(true)
-                    .createMediaSource(item)
-            } else {
-                DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(item)
-            },
-        )
+        sourceAsHls = MediaUrls.isHls(url)
+        exo.setMediaSource(buildMediaSource(url, sourceAsHls, dataSourceFactory))
 
         // 网页里点全屏时带着当时的进度；没有就接上次没看完的位置。
         val fromPageMs = intent.getLongExtra(EXTRA_START_MS, 0L)
@@ -205,13 +209,13 @@ class PlayerActivity : ComponentActivity() {
                     onExit = { finish() },
                     onVideoSize = { size -> applyOrientationFor(size) },
                     onError = { error ->
-                        // 直白告诉用户失败原因。静默停在黑屏上，用户只会以为是「又黑了」。
-                        Toast.makeText(
-                            this,
-                            "这个视频播不了：${error.errorCodeName}",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                        finish()
+                        // 先试着自己救一下：容器猜错了换另一种建源方式重来。
+                        if (!retryWithOtherSource(error)) {
+                            // 救不了就直白告诉用户失败原因。静默停在黑屏上，用户只会以为
+                            // 是「又黑了」，也报不出个所以然。
+                            Toast.makeText(this, playbackFailureText(error), Toast.LENGTH_LONG).show()
+                            finish()
+                        }
                     },
                 )
             }
@@ -231,6 +235,89 @@ class PlayerActivity : ComponentActivity() {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         } else {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        }
+    }
+
+    /**
+     * 按指定方式建一个媒体源。
+     *
+     * 抽出来是为了「换源重试」能原样再建一次：猜错容器时除了 `asHls` 以外的东西都必须一样。
+     */
+    private fun buildMediaSource(
+        url: String,
+        asHls: Boolean,
+        factory: DataSource.Factory,
+    ): MediaSource {
+        val item = MediaItem.fromUri(url)
+        return if (asHls) {
+            HlsMediaSource.Factory(factory)
+                .setAllowChunklessPreparation(true)
+                .createMediaSource(item)
+        } else {
+            DefaultMediaSourceFactory(factory).createMediaSource(item)
+        }
+    }
+
+    /**
+     * 建源方式猜错了就换另一种再试一次，成功返回 true。
+     *
+     * 嗅探到的地址不总能从扩展名看出容器：`/m3u8/<hash>` 没有后缀、有的 CDN 把格式写在
+     * 查询串里、还有站点把 `.m3u8` 直接当直链发。猜错时 ExoPlayer 报的是「容器不支持」，
+     * 与其直接告诉用户「播不了」，不如把 HLS 与直链互换重来一次——对用户来说这就是
+     * 「同一个地址，第一次黑屏、第二次能放」。只换一次，换完还失败才是真播不了。
+     */
+    private fun retryWithOtherSource(error: PlaybackException): Boolean {
+        val exo = player ?: return false
+        val factory = dataSourceFactory ?: return false
+        if (sourceRetried || !looksLikeWrongContainer(error)) return false
+        sourceRetried = true
+        sourceAsHls = !sourceAsHls
+
+        val resumeMs = exo.currentPosition.coerceAtLeast(0L)
+        // 换源要先停：setMediaSource 只在空闲态才允许，而失败后的播放器还挂在旧源上。
+        exo.stop()
+        exo.setMediaSource(buildMediaSource(mediaUrl, sourceAsHls, factory))
+        exo.prepare()
+        if (resumeMs > 0L) exo.seekTo(resumeMs)
+        exo.playWhenReady = true
+        return true
+    }
+
+    /**
+     * 这个错误像不像「容器认错了」。
+     *
+     * 只认解析类错误：编解码器不支持、没有权限、网络断了这些换一种建源方式也一样失败，
+     * 白等一轮还看不到真正的报错。`INVALID_HTTP_CONTENT_TYPE` 也算——服务器返回
+     * `text/html` 时，往往是地址根本不是媒体，换一种解析器反而可能对。
+     */
+    private fun looksLikeWrongContainer(error: PlaybackException): Boolean =
+        when (error.errorCode) {
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+            PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+            PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE,
+            -> true
+
+            else -> false
+        }
+
+    /**
+     * 给用户看的失败原因。
+     *
+     * 只有 `errorCodeName` 太干（`ERROR_CODE_IO_BAD_HTTP_STATUS` 谁知道是 403 还是 404），
+     * 所以把最内层那句真实原因也带上——它就是 HTTP 状态码、解封装失败的具体位置这类
+     * 能直接拿去搜的信息。
+     */
+    private fun playbackFailureText(error: PlaybackException): String {
+        val detail = generateSequence(error.cause) { it.cause }
+            .mapNotNull { it.message }
+            .firstOrNull { it.isNotBlank() }
+            ?.take(MAX_ERROR_DETAIL)
+        return if (detail == null) {
+            "这个视频播不了：${error.errorCodeName}"
+        } else {
+            "这个视频播不了：${error.errorCodeName}（$detail）"
         }
     }
 
@@ -346,6 +433,13 @@ private val RESIZE_OPTIONS = listOf(
     "铺满" to AspectRatioFrameLayout.RESIZE_MODE_FILL,
     "裁剪" to AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
 )
+
+/**
+ * 失败提示里带的那句底层原因最多这么长。
+ *
+ * 有些解封装异常会带上一整段二进制上下文，直接塞进 Toast 会把真正有用的错误码挤没。
+ */
+private const val MAX_ERROR_DETAIL = 120
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable

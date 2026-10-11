@@ -61,6 +61,17 @@ object OfflineMedia {
      */
     private val speed = DownloadSpeed()
 
+    /**
+     * 最近一次入队那条流的页面地址。
+     *
+     * `DownloadRequest` 里没有放请求头的地方，而 `DownloadManager` 的数据源是建管理器时
+     * 一次性给定的，所以只能让数据源在每次开连接时现取。并发下不同站的流可能互相拿到
+     * 对方的 Referer——但带了被拒会自动退到不带（[RefererFallbackDataSource]），
+     * 最坏是多一次请求，不会把本来能下的下坏。
+     */
+    @Volatile
+    private var pendingReferer: String? = null
+
     /** 离线缓存本体。`SimpleCache` 要求目录独占，进程内只能有一个实例。 */
     @Synchronized
     fun cache(context: Context): SimpleCache =
@@ -81,7 +92,8 @@ object OfflineMedia {
             context.applicationContext,
             database(context),
             cache(context),
-            httpFactory(referer = null),
+            // Referer 现取现用：管理器只建一次，而每条待下载流的页面地址都不一样。
+            RefererFallbackDataSource.Factory(httpFactory()) { pendingReferer },
             executor,
         ).also { managerInstance = it }
 
@@ -90,10 +102,14 @@ object OfflineMedia {
      *
      * 用同一份 cache 才能让「下载完成的流」离线播放；命中时 ExoPlayer 完全不会碰网络。
      *
-     * @param referer 页面地址。有的 CDN 会校验 Referer，播放和下载都带上更稳。
+     * @param referer 页面地址。有的 CDN 会校验 Referer，带上更稳；被拒时
+     *   [RefererFallbackDataSource] 会自动退到不带 Referer 的源再试一次。
      */
     fun playbackDataSource(context: Context, referer: String? = null): DataSource.Factory {
-        val upstream = DefaultDataSource.Factory(context, httpFactory(referer))
+        val upstream = DefaultDataSource.Factory(
+            context,
+            RefererFallbackDataSource.Factory(httpFactory()) { referer },
+        )
         return CacheDataSource.Factory()
             .setCache(cache(context))
             .setUpstreamDataSourceFactory(upstream)
@@ -105,21 +121,24 @@ object OfflineMedia {
      *
      * 刻意带一个浏览器 UA：ExoPlayer 默认的 `ExoPlayerLib/x.y.z` 会被不少国内 CDN
      * 直接 403。这不是伪装，是这些 CDN 只认浏览器的 UA。
+     *
+     * Referer 不在这里设：它是**按连接**现取的（见 [RefererFallbackDataSource]），
+     * 而工厂是复用一份的。
      */
-    private fun httpFactory(referer: String?): DefaultHttpDataSource.Factory =
-        DefaultHttpDataSource.Factory().apply {
-            setUserAgent(BROWSER_USER_AGENT)
-            referer?.let { setDefaultRequestProperties(mapOf("Referer" to it)) }
-        }
+    private fun httpFactory(): DefaultHttpDataSource.Factory =
+        DefaultHttpDataSource.Factory().apply { setUserAgent(BROWSER_USER_AGENT) }
 
     /**
      * 把一条流交给下载服务。
      *
      * 走 [DownloadService.sendAddDownload] 而不是直接操作 `DownloadManager`：分片下载是
      * 长时间任务，必须有前台服务撑着，否则用户切走应用就被系统连人带任务一起收走。
+     *
+     * @param referer 页面地址，有的 CDN 不给 Referer 就不放行（详见 [pendingReferer]）。
      */
-    fun enqueue(context: Context, url: String, title: String) {
+    fun enqueue(context: Context, url: String, title: String, referer: String? = null) {
         rememberTitle(context, url, title)
+        if (!referer.isNullOrBlank()) pendingReferer = referer
         val request = DownloadRequest.Builder(url, android.net.Uri.parse(url)).build()
         runCatching {
             DownloadService.sendAddDownload(

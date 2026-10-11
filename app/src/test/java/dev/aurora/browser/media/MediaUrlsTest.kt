@@ -33,4 +33,17 @@ class MediaUrlsTest {
         assertThat(MediaUrls.isHls("https://c.com/v/manifest.mpd")).isFalse()
         assertThat(MediaUrls.isHls("https://c.com/v/movie.mp4")).isFalse()
     }
+
+    /**
+     * 没有 `.m3u8` 后缀的播放列表也要认出来，口径必须和 `MediaSniffer` 收地址的尺子一致。
+     *
+     * 同类站点里 `/m3u8/<hash>`、`/play?url=xxx.m3u8` 这类写法很常见。嗅探认了、建源不认，
+     * 结果就是「地址拿到了却一播就报容器不支持」——播放器那层的换源重试能兜住，
+     * 但没必要先猜错一次。
+     */
+    @Test fun hlsWithoutTheExtensionStillCountsAsHls() {
+        assertThat(MediaUrls.isHls("https://c.com/m3u8/a54f4c74d9a560d6e86f17c28ddd24cd")).isTrue()
+        assertThat(MediaUrls.isHls("https://c.com/play?url=abc.m3u8&t=1")).isTrue()
+        assertThat(MediaUrls.isHls("https://c.com/v/MASTER.M3U8")).isTrue()
+    }
 }

@@ -30,7 +30,7 @@ object MediaDownload {
     ): Result {
         if (MediaUrls.isPlaylist(url)) {
             // HLS/DASH 是一堆分片：交给 Media3 的离线缓存，下完能离线播。
-            OfflineMedia.enqueue(context, url, title)
+            OfflineMedia.enqueue(context, url, title, referer)
             return Result(true, "已开始离线缓存，可在「下载管理」里离线观看")
         }
         val request = DownloadRequest(
