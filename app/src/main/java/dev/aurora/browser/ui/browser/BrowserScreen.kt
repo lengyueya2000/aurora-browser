@@ -342,7 +342,17 @@ fun BrowserScreen(
                     OmniboxBar(
                         displayUrl = hostOf(active.url),
                         security = securityOf(active.url, sslWarning = sslWarning),
-                        onTap = { vm.openOmnibox() },
+                        onTap = {
+                            // 顺手把当前网址放进剪贴板：网页里没有「复制链接」的入口，
+                            // 想分享到别处只能自己一个字符一个字符去选。
+                            val url = active.url
+                            if (!url.isNullOrBlank()) {
+                                vm.showMessage(
+                                    if (UrlClipboard.copy(context, url)) "已复制当前网址" else "复制失败",
+                                )
+                            }
+                            vm.openOmnibox()
+                        },
                         trailingIcon = if (loading) AuroraIcons.Close else AuroraIcons.Refresh,
                         onTrailingAction = {
                             if (loading) controller.stopLoading() else controller.reload()
