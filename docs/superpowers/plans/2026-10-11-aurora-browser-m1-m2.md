@@ -2728,6 +2728,14 @@ class TabSwitcherScreenTest {
         assertThat(closed).isEqualTo("b")
     }
 
+    // 选中是卡片的主操作，必须验证：点第二张卡片应回传它的 id。
+    @Test fun tappingCardSelectsItsTab() {
+        var selected: String? = null
+        render(onSelect = { selected = it })
+        compose.onNodeWithText("B 站").performClick()
+        assertThat(selected).isEqualTo("b")
+    }
+
     @Test fun tappingNewTabFiresCallback() {
         var n = 0
         render(onNewTab = { n++ })
@@ -2992,7 +3000,9 @@ private fun TabRowItem(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit,
             Text(tab.title, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 text = tab.url?.let { hostOf(it) } ?: "新标签页",
-                color = c.textDisabled,
+                // 次级信息文字须 ≥4.5:1：textDisabled(#64748B) 在 bg 上仅 ~3.75:1，
+                // textMuted(#94A3B8) 在 bg/surface 上 ~7.0/6.1:1。禁用色只留给真正禁用的控件。
+                color = c.textMuted,
                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
             )
         }
@@ -3004,7 +3014,7 @@ private fun TabRowItem(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit,
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.browser.TabSwitcherScreenTest"`
-Expected: BUILD SUCCESSFUL，7 tests passed
+Expected: BUILD SUCCESSFUL，8 tests passed
 
 - [ ] **Step 5: 提交**
 
@@ -3546,7 +3556,8 @@ fun HomeScreen(
                         .clip(RoundedCornerShape(AuroraRadius.s)).background(c.bgElevated))
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AuroraSpacing.xs)) {
                         Text(f.title, color = c.text, maxLines = 2)
-                        Text("${f.tag} · ${f.source}", color = c.textDisabled,
+                        // 次级信息文字须 ≥4.5:1（同 Task 11 的 TabRowItem URL）：用 textMuted。
+                        Text("${f.tag} · ${f.source}", color = c.textMuted,
                             style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
                     }
                 }
@@ -3866,10 +3877,10 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 6: 跑全部测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL，全部任务累计 76 tests passed
+Expected: BUILD SUCCESSFUL，全部任务累计 77 tests passed
 
 > 本任务新增的 `OmniboxScreenTest`（4 例）、`HomeScreenTest`（4 例）、`BrowserScreenTest`（5 例）
-> 共 13 例；加上前 11 个任务的 63 例，合计 76 例。
+> 共 13 例；加上前 11 个任务的 64 例，合计 77 例。
 
 - [ ] **Step 7: 手动冒烟验证**
 
