@@ -221,7 +221,11 @@ fun BrowserScreen(
                         onTrailingAction = {
                             if (loading) controller.stopLoading() else controller.reload()
                         },
-                        bookmarked = vm.isBookmarked(active.url),
+                        // 必须用已 collectAsState 的 bookmarks 列表来判断：StateFlow.value 在
+                        // 组合期读不出订阅，vm.isBookmarked() 只会取到当次组合那一刻的旧值，
+                        // 收藏状态变了星标也不会重绘（真机上就是点完不变色，直到别的状态
+                        // 顺带触发重组才补上）。
+                        bookmarked = bookmarks.any { it.url == active.url },
                         onToggleBookmark = { vm.toggleBookmark() },
                     )
                     Box(modifier = Modifier.weight(1f)) {

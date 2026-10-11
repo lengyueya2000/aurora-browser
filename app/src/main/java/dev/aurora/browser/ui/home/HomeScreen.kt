@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import dev.aurora.browser.ui.components.BottomToolbarHeight
 import dev.aurora.browser.ui.icons.AuroraIcons
 import dev.aurora.browser.ui.theme.*
 
@@ -27,8 +28,8 @@ import dev.aurora.browser.ui.theme.*
 private val FeedThumbWidth = 88.dp
 private val FeedThumbHeight = 66.dp
 
-/** 给悬浮工具栏留出的底部空间：工具栏 58dp + 上下留白，避免最后一条内容被压住。 */
-private val BottomToolbarClearance = 96.dp
+/** 给悬浮工具栏留出的底部空间，取自工具栏自己的高度定义，避免两处各写一个数。 */
+private val BottomToolbarClearance = BottomToolbarHeight
 
 data class Shortcut(val label: String, val url: String)
 

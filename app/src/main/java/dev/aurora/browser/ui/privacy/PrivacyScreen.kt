@@ -58,85 +58,88 @@ fun PrivacyScreen(
         SiteSecurity.WARNING -> Triple("证书异常，已拦截", c.warning, AuroraIcons.ShieldCheck)
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(c.bg)
-            .verticalScroll(rememberScrollState()),
-    ) {
+    // 页头留在滚动容器外：二级界面没有悬浮工具栏，返回箭头是唯一的应用内返回入口，
+    // 跟着内容滚走用户就只能靠系统返回键了（原型里 .topbar 也是 flex:0 0 auto）。
+    Column(modifier = modifier.fillMaxSize().background(c.bg)) {
         ScreenHeader(title = "隐私与安全", onBack = onBack)
 
-        // 拦截计数大数字
         Column(
-            modifier = Modifier.fillMaxWidth().padding(AuroraSpacing.l),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(AuroraSpacing.xs),
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
         ) {
-            Text(
-                text = trackerCount.toString(),
-                color = c.success,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 44.sp,
-            )
-            Text("个追踪器已拦截（本页）", color = c.textMuted, style = MaterialTheme.typography.labelMedium)
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.s),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.m),
-        ) {
-            Box(
-                modifier = Modifier.size(26.dp).clip(CircleShape).background(securityTint.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
+            // 拦截计数大数字
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(AuroraSpacing.l),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(AuroraSpacing.xs),
             ) {
-                Icon(
-                    painter = painterResource(securityIcon),
-                    contentDescription = null,
-                    tint = securityTint,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(securityText, color = c.text)
                 Text(
-                    text = currentUrl?.let { hostOf(it) }?.takeIf { it.isNotBlank() } ?: "新标签页",
-                    color = c.textMuted,
-                    style = MaterialTheme.typography.labelSmall,
+                    text = trackerCount.toString(),
+                    color = c.success,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 44.sp,
                 )
+                Text("个追踪器已拦截（本页）", color = c.textMuted, style = MaterialTheme.typography.labelMedium)
             }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.s),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.m),
+            ) {
+                Box(
+                    modifier = Modifier.size(26.dp).clip(CircleShape).background(securityTint.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(securityIcon),
+                        contentDescription = null,
+                        tint = securityTint,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(securityText, color = c.text)
+                    Text(
+                        text = currentUrl?.let { hostOf(it) }?.takeIf { it.isNotBlank() } ?: "新标签页",
+                        color = c.textMuted,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+
+            SettingRow(
+                title = "追踪器拦截",
+                subtitle = "命中 ${TrackerBlocklist.entries.size} 条主机名规则",
+                onClick = { onBlockChange(!blockEnabled) },
+                trailing = {
+                    Switch(
+                        checked = blockEnabled,
+                        onCheckedChange = null,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = c.onBrand,
+                            checkedTrackColor = c.brand,
+                            uncheckedThumbColor = c.textMuted,
+                            uncheckedTrackColor = c.surfaceHover,
+                            uncheckedBorderColor = c.border,
+                        ),
+                    )
+                },
+            )
+
+            SettingRow(
+                title = "站点权限",
+                subtitle = "相机 / 麦克风 / 定位 / 通知：当前一律拒绝（逐站授权见 M4）",
+                value = "全部拒绝",
+            )
+            SettingRow(
+                title = "第三方 Cookie",
+                subtitle = "跨站请求不携带 Cookie",
+                value = "已阻止",
+            )
+
+            Column(modifier = Modifier.padding(bottom = AuroraSpacing.xxl)) {}
         }
-
-        SettingRow(
-            title = "追踪器拦截",
-            subtitle = "命中 ${TrackerBlocklist.entries.size} 条主机名规则",
-            onClick = { onBlockChange(!blockEnabled) },
-            trailing = {
-                Switch(
-                    checked = blockEnabled,
-                    onCheckedChange = null,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = c.onBrand,
-                        checkedTrackColor = c.brand,
-                        uncheckedThumbColor = c.textMuted,
-                        uncheckedTrackColor = c.surfaceHover,
-                        uncheckedBorderColor = c.border,
-                    ),
-                )
-            },
-        )
-
-        SettingRow(
-            title = "站点权限",
-            subtitle = "相机 / 麦克风 / 定位 / 通知：当前一律拒绝（逐站授权见 M4）",
-            value = "全部拒绝",
-        )
-        SettingRow(
-            title = "第三方 Cookie",
-            subtitle = "跨站请求不携带 Cookie",
-            value = "已阻止",
-        )
-
-        Column(modifier = Modifier.padding(bottom = AuroraSpacing.xxl)) {}
     }
 }

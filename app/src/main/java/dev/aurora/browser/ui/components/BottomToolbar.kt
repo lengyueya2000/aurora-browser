@@ -16,6 +16,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
@@ -26,6 +27,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+
+private val ToolbarPillHeight: Dp = 58.dp
+
+/**
+ * 悬浮工具栏占掉的完整高度：58dp 胶囊 + 上下各 `AuroraSpacing.xl` 外边距。
+ *
+ * 工具栏浮在内容之上，所以任何自己滚动的界面都必须在末尾留出这么多空白，
+ * 否则滚到底时最后一行会永久停在工具栏底下、再也滚不出来。应用内页面（首页
+ * 信息流的 `BottomToolbarClearance`）和网页（`WebViewPool.bottomInsetScript`）
+ * 都按这个值留白。
+ */
+val BottomToolbarHeight: Dp = ToolbarPillHeight + AuroraSpacing.xl * 2
 
 @Composable
 fun BottomToolbar(
@@ -48,7 +61,7 @@ fun BottomToolbar(
     Row(
         modifier = modifier
             .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.xl)
-            .height(58.dp)
+            .height(ToolbarPillHeight)
             .clip(RoundedCornerShape(AuroraRadius.full))
             .background(if (incognito) c.bg.copy(alpha = 0.82f) else c.glass)
             .border(

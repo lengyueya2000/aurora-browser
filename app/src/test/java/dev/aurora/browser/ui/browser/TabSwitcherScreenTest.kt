@@ -10,6 +10,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -126,9 +127,20 @@ class TabSwitcherScreenTest {
         assertThat(selected).isEqualTo("b")
     }
 
+    /**
+     * 真机回归：列表视图里新标签页的标题和副标题都是「新标签页」，看着像渲染了两遍。
+     * 新标签页没有地址，副标题就该不画。
+     */
+    @Test fun newTabRowDoesNotRepeatItsLabelAsSubtitle() {
+        render()
+        compose.onNodeWithText("列表").performClick()
+        compose.onAllNodesWithText("新标签页").assertCountEquals(1)
+        // 有地址的标签行仍然显示域名副标题
+        compose.onNodeWithText("a.com").assertExists()
+    }
+
     /** 无痕标签在两种视图下都有可辨识标记。 */
-    @Test fun incognitoTabsAreMarked() {
-        compose.setContent {
+    @Test fun incognitoTabsAreMarked() {        compose.setContent {
             AuroraTheme {
                 TabSwitcherScreen(
                     tabs = listOf(

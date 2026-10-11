@@ -102,6 +102,47 @@ class WebViewPool(
     }
 
     companion object {
+        /** 网页尾部要预留的滚动空间，等于底部悬浮工具栏的完整高度（CSS px 与 dp 同值）。 */
+        internal val PageBottomInsetCssPx: Int =
+            dev.aurora.browser.ui.components.BottomToolbarHeight.value.toInt()
+
+        /** 注入的留白元素 id。固定值便于幂等替换，也便于测试断言。 */
+        internal const val BottomInsetElementId = "aurora-bottom-inset"
+
+        /**
+         * 生成「在文档尾部补一段滚动空间」的脚本。
+         *
+         * 为什么用注入而不是给 WebView 加 padding：`setPadding` 裁的是**视口**，内容会
+         * 在工具栏上沿被硬生生切断，悬浮玻璃工具栏压在内容上的观感就没了。这里改的是
+         * **文档**高度，滚动中内容照样从玻璃工具栏下面穿过，只有滚到底时最后一行会停在
+         * 工具栏上沿——和原型 `.page{padding-bottom:110px}` 的做法一致。
+         *
+         * 三重保险：
+         * - 元素 `pointer-events:none`，不会抢走页面的点击；
+         * - 幂等，重复调用先删旧的再加新的（SPA 会反复触发 onPageFinished）；
+         * - 页面本来就不滚动时不注入，免得短页面凭空多出一段可滚动空白。
+         *   `load` 与 500ms 后再各跑一次，兜住图片/字体撑高文档的情况。
+         */
+        internal fun bottomInsetScript(cssPx: Int): String = """
+            (function(){
+              var H = $cssPx, ID = '$BottomInsetElementId';
+              function run() {
+                var old = document.getElementById(ID);
+                if (old && old.parentNode) old.parentNode.removeChild(old);
+                if (!document.body) return;
+                if (document.documentElement.scrollHeight <= window.innerHeight + 1) return;
+                var d = document.createElement('div');
+                d.id = ID;
+                d.setAttribute('aria-hidden', 'true');
+                d.style.cssText = 'height:' + H + 'px;width:100%;pointer-events:none;';
+                document.body.appendChild(d);
+              }
+              run();
+              setTimeout(run, 500);
+              window.addEventListener('load', run);
+            })();
+        """.trimIndent()
+
         /**
          * 是否该把这次加载失败当作整页失败。
          *
@@ -126,6 +167,11 @@ class WebViewPool(
 
                 override fun onPageFinished(view: WebView, url: String) {
                     onPageFinished(tabId, view.title.orEmpty(), url)
+                    // 悬浮工具栏盖在网页之上，页面末尾如果不留白，滚到底时最后几行会
+                    // 永久停在工具栏底下、滚也滚不出来。给文档尾部补一段滚动空间。
+                    runCatching {
+                        view.evaluateJavascript(bottomInsetScript(PageBottomInsetCssPx), null)
+                    }
                 }
 
                 /**

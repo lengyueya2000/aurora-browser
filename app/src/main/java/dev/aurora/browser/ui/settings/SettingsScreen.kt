@@ -33,71 +33,75 @@ fun SettingsScreen(
     onBlockTrackersChange: (Boolean) -> Unit,
     onOpenDownloads: () -> Unit,
     onBack: () -> Unit,
+    /** 必填：由调用方传 `BuildConfig.VERSION_NAME`，不给默认值就不会和 versionName 漂移。 */
+    versionName: String,
     modifier: Modifier = Modifier,
-    versionName: String = "1.1",
 ) {
     val c = Aurora.colors
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(c.bg)
-            .verticalScroll(rememberScrollState()),
-    ) {
+    // 页头留在滚动容器外：二级界面没有悬浮工具栏，返回箭头是唯一的应用内返回入口，
+    // 跟着内容滚走用户就只能靠系统返回键了（原型里 .topbar 也是 flex:0 0 auto）。
+    Column(modifier = modifier.fillMaxSize().background(c.bg)) {
         ScreenHeader(title = "设置", onBack = onBack)
 
-        SettingGroup("外观")
-        SettingRow(
-            title = "深色模式",
-            subtitle = "Aurora 只提供深色主题，跟随系统字号缩放",
-            value = "已开启",
-        )
-        SwitchRow(
-            title = "主页信息流",
-            subtitle = "在新标签页显示「为你推荐」",
-            checked = showFeed,
-            onCheckedChange = onShowFeedChange,
-        )
-
-        SettingGroup("隐私与安全")
-        SwitchRow(
-            title = "追踪器拦截",
-            subtitle = "按主机名拦截常见统计与广告域名",
-            checked = blockTrackers,
-            onCheckedChange = onBlockTrackersChange,
-        )
-
-        SettingGroup("搜索")
-        SettingRow(
-            title = "搜索引擎",
-            subtitle = "地址栏输入非网址内容时使用",
-        )
-        SegmentedControl(
-            options = SearchEngine.entries.map { it to it.label },
-            selected = engine,
-            onSelect = onEngineChange,
+        Column(
             modifier = Modifier
-                .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.s)
-                .semantics { contentDescription = "搜索引擎" },
-        )
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            SettingGroup("外观")
+            SettingRow(
+                title = "深色模式",
+                subtitle = "Aurora 只提供深色主题，跟随系统字号缩放",
+                value = "已开启",
+            )
+            SwitchRow(
+                title = "主页信息流",
+                subtitle = "在新标签页显示「为你推荐」",
+                checked = showFeed,
+                onCheckedChange = onShowFeedChange,
+            )
 
-        SettingGroup("下载")
-        SettingRow(
-            title = "下载管理",
-            subtitle = "查看进行中与已完成的下载",
-            icon = AuroraIcons.Download,
-            onClick = onOpenDownloads,
-        )
+            SettingGroup("隐私与安全")
+            SwitchRow(
+                title = "追踪器拦截",
+                subtitle = "按主机名拦截常见统计与广告域名",
+                checked = blockTrackers,
+                onCheckedChange = onBlockTrackersChange,
+            )
 
-        SettingGroup("无障碍")
-        SettingRow(title = "字号缩放", subtitle = "跟随系统设置，正文在 200% 下不截断", value = "跟随系统")
-        SettingRow(title = "移除动画", subtitle = "跟随系统「移除动画」开关", value = "跟随系统")
+            SettingGroup("搜索")
+            SettingRow(
+                title = "搜索引擎",
+                subtitle = "地址栏输入非网址内容时使用",
+            )
+            SegmentedControl(
+                options = SearchEngine.entries.map { it to it.label },
+                selected = engine,
+                onSelect = onEngineChange,
+                modifier = Modifier
+                    .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.s)
+                    .semantics { contentDescription = "搜索引擎" },
+            )
 
-        SettingGroup("关于")
-        SettingRow(title = "版本", value = versionName)
-        SettingRow(title = "开源协议", value = "MIT")
-        SettingRow(title = "项目主页", subtitle = "github.com/lengyueya2000/aurora-browser")
+            SettingGroup("下载")
+            SettingRow(
+                title = "下载管理",
+                subtitle = "查看进行中与已完成的下载",
+                icon = AuroraIcons.Download,
+                onClick = onOpenDownloads,
+            )
 
-        Column(modifier = Modifier.padding(bottom = AuroraSpacing.xxl)) {}
+            SettingGroup("无障碍")
+            SettingRow(title = "字号缩放", subtitle = "跟随系统设置，正文在 200% 下不截断", value = "跟随系统")
+            SettingRow(title = "移除动画", subtitle = "跟随系统「移除动画」开关", value = "跟随系统")
+
+            SettingGroup("关于")
+            SettingRow(title = "版本", value = versionName)
+            SettingRow(title = "开源协议", value = "MIT")
+            SettingRow(title = "项目主页", subtitle = "github.com/lengyueya2000/aurora-browser")
+
+            Column(modifier = Modifier.padding(bottom = AuroraSpacing.xxl)) {}
+        }
     }
 }
 

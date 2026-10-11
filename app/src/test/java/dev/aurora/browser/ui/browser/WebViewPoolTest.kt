@@ -222,4 +222,32 @@ class WebViewPoolTest {
         pool.evaluate("a", "return 1") { _, _ -> }
         assertThat(shadowOf(web).lastEvaluatedJavascript).isEqualTo("return 1")
     }
+
+    /**
+     * 真机回归：底部悬浮工具栏浮在网页之上，页面末尾不留白的话，滚到底时最后几行
+     * 会永久停在工具栏底下滚不出来（在雷电模拟器的长页面上复现过）。
+     */
+    @Test fun pageFinishedInjectsBottomSpaceForTheFloatingToolbar() {
+        val f = CountingFactory()
+        val pool = newPool(f)
+        val web = pool.get("a", false)
+        shadowOf(web).webViewClient.onPageFinished(web, "https://a.com")
+        val script = shadowOf(web).lastEvaluatedJavascript
+        assertThat(script).contains(WebViewPool.BottomInsetElementId)
+        assertThat(script).contains(WebViewPool.PageBottomInsetCssPx.toString())
+    }
+
+    /**
+     * 留白元素不能抢走页面的点击，否则底部那一条上的链接/按钮会失效；
+     * 也不该在本来就不滚动的短页面上凭空多出一段空白。
+     */
+    @Test fun bottomInsetScriptIsNonBlockingIdempotentAndGuarded() {
+        val script = WebViewPool.bottomInsetScript(106)
+        assertThat(script).contains("pointer-events:none")
+        // 先删旧的再加新的：SPA 会反复触发 onPageFinished。
+        assertThat(script).contains("removeChild")
+        // 页面本来就不滚动时直接返回，不留白。
+        assertThat(script).contains("scrollHeight")
+        assertThat(script).contains("window.addEventListener('load', run)")
+    }
 }

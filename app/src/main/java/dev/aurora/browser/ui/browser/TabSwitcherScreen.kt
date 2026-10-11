@@ -249,13 +249,17 @@ private fun TabRowItem(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit,
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(tab.title, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                text = tab.url?.let { hostOf(it) } ?: "新标签页",
-                // 次级信息文字须 ≥4.5:1：textDisabled(#64748B) 在 bg 上仅 ~3.75:1，
-                // textMuted(#94A3B8) 在 bg/surface 上 ~7.0/6.1:1。禁用色只留给真正禁用的控件。
-                color = c.textMuted,
-                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-            )
+            // 新标签页没有地址，副标题就不画：否则标题和副标题都是「新标签页」，
+            // 看着像渲染了两遍。
+            tab.url?.let { url ->
+                Text(
+                    text = hostOf(url),
+                    // 次级信息文字须 ≥4.5:1：textDisabled(#64748B) 在 bg 上仅 ~3.75:1，
+                    // textMuted(#94A3B8) 在 bg/surface 上 ~7.0/6.1:1。禁用色只留给真正禁用的控件。
+                    color = c.textMuted,
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                )
+            }
         }
         IconAction(AuroraIcons.Close, "关闭标签页", onClose)
     }

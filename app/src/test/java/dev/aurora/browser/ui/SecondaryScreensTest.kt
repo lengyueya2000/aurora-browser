@@ -1,10 +1,12 @@
 package dev.aurora.browser.ui
 
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.data.DownloadItem
@@ -44,7 +46,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING,
                     onEngineChange = {}, showFeed = true, onShowFeedChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
-                    onOpenDownloads = {}, onBack = {},
+                    onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
         }
@@ -52,7 +54,7 @@ class SecondaryScreensTest {
         compose.onNodeWithText("隐私与安全").assertExists()
         compose.onNodeWithText("搜索").assertExists()
         compose.onNodeWithText("百度").assertExists()
-        compose.onNodeWithText("1.1").assertExists()
+        compose.onNodeWithText("9.9-test").assertExists()
     }
 
     @Test fun settingsEngineSelectionReportsTheEngine() {
@@ -63,7 +65,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING,
                     onEngineChange = { picked = it }, showFeed = true, onShowFeedChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
-                    onOpenDownloads = {}, onBack = {},
+                    onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
         }
@@ -80,7 +82,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING, onEngineChange = {},
                     showFeed = true, onShowFeedChange = { feed = it },
                     blockTrackers = false, onBlockTrackersChange = { block = it },
-                    onOpenDownloads = {}, onBack = {},
+                    onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
         }
@@ -99,7 +101,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING, onEngineChange = {},
                     showFeed = true, onShowFeedChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
-                    onOpenDownloads = { opened++ }, onBack = { back++ },
+                    onOpenDownloads = { opened++ }, onBack = { back++ }, versionName = "9.9-test",
                 )
             }
         }
@@ -296,5 +298,63 @@ class SecondaryScreensTest {
             }
         }
         compose.onNodeWithText("本页无法进入阅读模式").assertExists()
+    }
+
+    // ---------- 页头固定（真机回归） ----------
+
+    /**
+     * 真机回归：设置与隐私两个界面此前把 `ScreenHeader` 放在了滚动容器**内**，
+     * 往下滑页头就跟着滚走——而这两个界面没有悬浮工具栏，返回箭头是唯一的应用内
+     * 返回入口，滚走之后用户只能靠系统返回键。原型里 `.topbar` 是 `flex:0 0 auto`，
+     * 书签/下载/阅读三个界面也一直是页头固定，只有这两个漏了。
+     *
+     * 屏高取 640dp，保证正文确实比视口长；同时断言正文**确实滚了**，
+     * 否则「页头没动」可能只是因为压根没滚动。
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = "w411dp-h640dp-xhdpi")
+    fun settingsHeaderStaysPutWhileTheBodyScrolls() {
+        compose.setContent {
+            AuroraTheme {
+                SettingsScreen(
+                    engine = SearchEngine.BING,
+                    onEngineChange = {}, showFeed = true, onShowFeedChange = {},
+                    blockTrackers = true, onBlockTrackersChange = {},
+                    onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
+                )
+            }
+        }
+        assertHeaderStaysPut(firstBodyNode = "外观") {
+            compose.onNodeWithText("项目主页").performScrollTo()
+        }
+    }
+
+    // 隐私页正文只有 ~320dp，视口要压到 200dp 才会真的溢出。
+    @Test
+    @Config(sdk = [34], qualifiers = "w411dp-h200dp-xhdpi")
+    fun privacyHeaderStaysPutWhileTheBodyScrolls() {
+        compose.setContent {
+            AuroraTheme {
+                PrivacyScreen(
+                    trackerCount = 3, blockEnabled = true, onBlockChange = {},
+                    currentUrl = "https://a.com", security = SiteSecurity.SECURE, onBack = {},
+                )
+            }
+        }
+        assertHeaderStaysPut(firstBodyNode = "个追踪器已拦截（本页）") {
+            compose.onNodeWithText("第三方 Cookie").performScrollTo()
+        }
+    }
+
+    private fun assertHeaderStaysPut(firstBodyNode: String, scroll: () -> Unit) {
+        fun topOf(text: String) = compose.onNodeWithText(text).getUnclippedBoundsInRoot().top.value
+        val headerBefore = compose.onNodeWithContentDescription("返回").getUnclippedBoundsInRoot().top.value
+        val bodyBefore = topOf(firstBodyNode)
+
+        scroll()
+
+        assertThat(topOf(firstBodyNode)).isLessThan(bodyBefore)
+        assertThat(compose.onNodeWithContentDescription("返回").getUnclippedBoundsInRoot().top.value)
+            .isWithin(0.5f).of(headerBefore)
     }
 }

@@ -5,6 +5,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.ui.theme.AuroraTheme
 import org.junit.Rule
@@ -109,5 +111,26 @@ class OmniboxScreenTest {
         compose.onNodeWithContentDescription("扫码").performClick()
         compose.onNodeWithContentDescription("无痕").performClick()
         assertThat(listOf(paste, voice, scan, incognito)).containsExactly(1, 1, 1, 1)
+    }
+
+    /**
+     * 真机回归（在雷电模拟器上发现的缺陷）：四个等宽快捷块里最长的是「粘贴并前往」，
+     * 标签用默认的 bodyLarge(16sp) 时在窄屏上放不下，真机上被裁成了「粘贴并前」。
+     *
+     * 断言节点存在是拦不住的——文字节点一直在，只是画不出来。Compose 1.7 的语义树也
+     * 不暴露 TextLayoutResult，所以这里改为直接验算布局预算：把生产代码里真实使用的
+     * 字号和内边距取出来，检查最窄支持的屏幕宽度下每个块装得下 5 个汉字。
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = "w320dp-h640dp-mdpi")
+    fun longestQuickActionLabelFitsOnTheNarrowestSupportedScreen() {
+        var labelFontSize: TextUnit? = null
+        compose.setContent {
+            AuroraTheme { labelFontSize = quickActionLabelStyle().fontSize }
+        }
+        // mdpi 下 1sp == 1dp，直接把字号当汉字宽度用。
+        val neededForFiveCjkGlyphs = labelFontSize!!.value * 5
+        val available = quickActionLabelMaxWidth(320.dp).value
+        assertThat(available).isAtLeast(neededForFiveCjkGlyphs)
     }
 }

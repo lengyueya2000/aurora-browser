@@ -81,4 +81,25 @@ class BrowserScreenTest {
         // 地址栏覆盖层也在
         compose.onNodeWithContentDescription("地址栏输入").assertExists()
     }
+
+    /**
+     * 真机回归：星标此前按 `vm.isBookmarked()` 取值，而它内部读的是 `StateFlow.value`——
+     * 组合期读不出订阅。收藏状态确实写进去了（书签库里看得到），但星标不会重绘，
+     * 要等别的状态顺带触发重组才补上。在雷电模拟器上表现为「点完不变色，打开菜单后才变」。
+     */
+    @Test fun bookmarkStarUpdatesRightAfterToggling() {
+        val vm = BrowserViewModel()
+        render(vm)
+        vm.navigate("https://a.com")
+        compose.waitForIdle()
+
+        compose.onNodeWithContentDescription("收藏").assertExists()
+        compose.onNodeWithContentDescription("收藏").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("取消收藏").assertExists()
+
+        compose.onNodeWithContentDescription("取消收藏").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("收藏").assertExists()
+    }
 }

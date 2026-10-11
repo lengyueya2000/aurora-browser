@@ -176,12 +176,33 @@ private fun QuickAction(
             .background(c.bgElevated)
             .border(1.dp, c.divider, RoundedCornerShape(AuroraRadius.m))
             .auroraClickable(onClick = onClick)
-            .padding(vertical = AuroraSpacing.m)
+            .padding(vertical = AuroraSpacing.m, horizontal = QuickActionLabelPadding)
             .semantics { contentDescription = label },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(AuroraSpacing.s, Alignment.CenterVertically),
     ) {
         Icon(painterResource(icon), null, tint = c.brand, modifier = Modifier.size(21.dp))
-        Text(label, color = c.textSecondary, maxLines = 1)
+        Text(
+            text = label,
+            color = c.textSecondary,
+            style = quickActionLabelStyle(),
+            maxLines = 1,
+        )
     }
 }
+
+/**
+ * 快捷动作标签字号：labelSmall（11sp），对齐原型 `.qa span{font-size:11px}`。
+ *
+ * 不能用默认的 bodyLarge（16sp）：四个等宽块在 320dp 窄屏上每个只剩 60dp 出头的
+ * 可用宽度，5 个汉字 × 16sp 放不下，真机上「粘贴并前往」被裁成了「粘贴并前」。
+ * 这条约束由 [quickActionLabelMaxWidth] + OmniboxScreenTest 一起守住。
+ */
+@Composable
+internal fun quickActionLabelStyle() = androidx.compose.material3.MaterialTheme.typography.labelSmall
+
+/** 每个快捷动作块内部真正能画字的宽度（减去外层内边距、块间距和块自身的水平内边距）。 */
+internal fun quickActionLabelMaxWidth(screenWidth: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp =
+    (screenWidth - AuroraSpacing.m * 2 - AuroraSpacing.s * 3) / 4 - QuickActionLabelPadding * 2
+
+private val QuickActionLabelPadding = AuroraSpacing.xs
