@@ -26,6 +26,9 @@ fun <T> SegmentedControl(
     modifier: Modifier = Modifier,
 ) {
     val c = Aurora.colors
+    // 各段紧贴（0dp 间距）：分段控件是「单选一组」的单一控件，Material 的 SegmentedButton
+    // 同样紧贴。全局约束「相邻可点目标 ≥8dp」针对的是彼此独立的目标，不适用于成组单选控件
+    // （见 progress.md Ruling 16）。
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(AuroraRadius.full))

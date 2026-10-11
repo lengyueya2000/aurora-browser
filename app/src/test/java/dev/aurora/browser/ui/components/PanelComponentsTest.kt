@@ -1,12 +1,18 @@
 package dev.aurora.browser.ui.components
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.ui.theme.AuroraTheme
@@ -89,5 +95,19 @@ class PanelComponentsTest {
             val h = compose.onNodeWithText(label).getUnclippedBoundsInRoot().height
             assertThat(h.value).isAtLeast(48f)
         }
+    }
+
+    // 遮罩是全屏可点的；面板必须自己吃掉点击，否则点在面板留白上会穿透遮罩、把面板误关掉。
+    @Test fun tappingSheetBodyDoesNotDismiss() {
+        var dismissed = 0
+        compose.setContent {
+            AuroraTheme {
+                AuroraBottomSheet(onDismiss = { dismissed++ }) {
+                    Text("面板内容", modifier = Modifier.height(120.dp))
+                }
+            }
+        }
+        compose.onNodeWithText("面板内容").performTouchInput { click() }
+        assertThat(dismissed).isEqualTo(0)
     }
 }
