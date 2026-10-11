@@ -1137,7 +1137,10 @@ fun OmniboxBar(
             .height(44.dp)
             .clip(RoundedCornerShape(AuroraRadius.full))
             .background(c.surfaceHover)
-            .semantics(mergeDescendants = true) {
+            // 不要加 mergeDescendants = true：右侧动作按钮是这一行的子节点，合并后它不再是
+            // 独立语义节点——`onNodeWithContentDescription("刷新")` 会解析到整行、点到 onTap
+            // 而不是 onTrailingAction，读屏用户也够不到刷新/停止按钮。
+            .semantics {
                 contentDescription = if (blank) "地址栏" else "地址栏，$displayUrl"
             }
             .clickable(
