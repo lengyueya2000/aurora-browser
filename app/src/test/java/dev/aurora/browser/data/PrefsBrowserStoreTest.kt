@@ -40,16 +40,20 @@ class PrefsBrowserStoreTest {
         PrefsBrowserStore(context).apply {
             setSearchEngine(SearchEngine.BAIDU)
             setBlockTrackers(false)
+            setDesktopMode(true)
         }
         val reopened = PrefsBrowserStore(context)
         assertThat(reopened.searchEngine.value).isEqualTo(SearchEngine.BAIDU)
         assertThat(reopened.blockTrackers.value).isFalse()
+        assertThat(reopened.desktopMode.value).isTrue()
     }
 
     @Test fun defaultsAreUsedOnFirstLaunch() {
         val store = PrefsBrowserStore(context)
         assertThat(store.searchEngine.value).isEqualTo(SearchEngine.Default)
         assertThat(store.blockTrackers.value).isTrue()
+        // 桌面版默认关着：绝大多数站点在手机版下更好用，不该让用户先去关掉它。
+        assertThat(store.desktopMode.value).isFalse()
         assertThat(store.bookmarks.value).isEmpty()
         assertThat(store.history.value).isEmpty()
     }

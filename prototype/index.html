@@ -168,10 +168,26 @@ body{
 .shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 8px}
 .sc{display:flex;flex-direction:column;align-items:center;gap:7px;cursor:pointer}
 .sc .tile{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;
-  font-size:19px;font-weight:700;color:#fff;box-shadow:var(--shadow-1)}
+  background:var(--color-surface-hover);box-shadow:var(--shadow-1)}
+/* 图标来自站点自己的 favicon（28dp），取不到时才退回首字母 */
+.sc .tile .fav{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;
+  font-size:14px;font-weight:700;color:#fff;overflow:hidden}
+.sc .tile .fav img{width:100%;height:100%;display:block;object-fit:contain}
 .sc span{font-size:11px;color:var(--color-text-muted);max-width:72px;text-align:center;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sc.add .tile{background:var(--color-surface);border:1px dashed var(--color-border);color:var(--color-text-muted)}
+
+/* 继续观看：主页上的续播卡片，点一下回到内置播放器 */
+.resume{display:flex;flex-direction:column;gap:8px}
+.rcard{background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);
+  padding:11px 12px;cursor:pointer;box-shadow:var(--shadow-1)}
+.rcard .row1{display:flex;align-items:flex-start;gap:10px}
+.rcard .rtext{flex:1 1 auto;min-width:0}
+.rcard .rt{font-size:13.5px;color:var(--color-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rcard .rm{font-size:11px;color:var(--color-text-disabled);font-family:var(--font-mono);margin-top:3px}
+.rcard .rx{flex:0 0 26px;display:grid;place-items:center;color:var(--color-text-disabled)}
+.rbar{height:3px;border-radius:2px;background:var(--color-surface-hover);overflow:hidden;margin-top:9px}
+.rbar i{display:block;height:100%;border-radius:2px;background:var(--color-brand)}
 
 /* ── floating bottom toolbar ──────────────────────────────── */
 .toolbar-wrap{position:absolute;left:0;right:0;bottom:0;padding:0 20px 22px;
@@ -267,11 +283,14 @@ body{
 .tab-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 16px 140px}
 .tabcard{background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);
   overflow:hidden;cursor:pointer;box-shadow:var(--shadow-1)}
-.tabcard .prev{height:96px;position:relative;background:linear-gradient(160deg,#16233a,#0e1626)}
-.tabcard .prev .glow{position:absolute;inset:0;
-  background:radial-gradient(60% 60% at 30% 25%, rgba(56,189,248,.28), transparent 70%)}
-.tabcard .prev .fav{position:absolute;left:8px;top:8px;width:20px;height:20px;border-radius:6px;
-  display:grid;place-items:center;font-size:11px;font-weight:700;color:#fff}
+.tabcard .prev{height:96px;position:relative;background:#0e1626;overflow:hidden}
+/* 页面缩略图：真机上来自 WebView.draw()，这里是它的样子 */
+.tabcard .prev .shot{position:absolute;inset:0;display:flex;flex-direction:column;gap:6px;
+  padding:9px 10px;background:linear-gradient(180deg,#f8fafc,#dfe6ef)}
+.tabcard .prev .shot i{display:block;height:5px;border-radius:2px;background:rgba(15,23,42,.16)}
+.tabcard .prev .shot .hero{height:28px;border-radius:5px;background:linear-gradient(135deg,#1772f6,#0b4fd1)}
+.tabcard .prev .none{position:absolute;inset:0;display:grid;place-items:center;
+  color:var(--color-text-disabled);background:linear-gradient(160deg,#16233a,#0e1626)}
 .tabcard .prev .cl{position:absolute;right:6px;top:6px;width:26px;height:26px;border-radius:50%;
   background:rgba(2,6,23,.6);display:grid;place-items:center;color:var(--color-text-secondary)}
 .tabcard .cap{padding:9px 10px;display:flex;align-items:center;gap:8px}
@@ -279,7 +298,7 @@ body{
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tabcard.active{border-color:var(--color-brand);box-shadow:0 0 0 1px var(--color-brand)}
 .tabcard.inc .prev{background:linear-gradient(160deg,#101828,#05070d)}
-.tabcard.inc .prev .glow{background:radial-gradient(60% 60% at 30% 25%, rgba(148,163,184,.16), transparent 70%)}
+.tabcard.inc .prev .none{background:linear-gradient(160deg,#101828,#05070d)}
 
 .group-head{display:flex;align-items:center;gap:10px;padding:12px 16px;margin-top:4px}
 .group-head .swatch{width:10px;height:10px;border-radius:3px;background:var(--color-brand)}
@@ -290,6 +309,10 @@ body{
   border-bottom:1px solid var(--color-divider)}
 .tabrow .fav{width:28px;height:28px;flex:0 0 28px;border-radius:8px;display:grid;place-items:center;
   font-size:12px;font-weight:700;color:#fff}
+/* 列表里的 48×30 页面缩略图，取不到时整块不占位 */
+.tabrow .thumb{width:48px;height:30px;flex:0 0 48px;border-radius:6px;position:relative;overflow:hidden;
+  background:linear-gradient(180deg,#f8fafc,#dbe3ee)}
+.tabrow .thumb i{position:absolute;left:5px;height:3px;border-radius:2px;background:rgba(15,23,42,.18)}
 .tabrow .main{flex:1 1 auto;min-width:0}
 .tabrow .main .tt{font-size:13.5px;color:var(--color-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tabrow .main .dm{font-size:11px;color:var(--color-text-disabled);font-family:var(--font-mono)}
@@ -310,6 +333,8 @@ body{
 .act span{font-size:11px;font-weight:500;white-space:nowrap}
 .act.off{opacity:.42;pointer-events:none}
 .sheet-rows{border-top:1px solid var(--color-divider);padding-top:4px}
+.sheet-h{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--color-brand);padding:16px 0 6px}
 .srow{display:flex;align-items:center;gap:12px;height:52px;cursor:pointer}
 .srow .ic{color:var(--color-text-muted);width:22px;display:grid;place-items:center}
 .srow .lb{flex:1 1 auto;font-size:14px;color:var(--color-text)}
@@ -514,15 +539,38 @@ body{
       </div>
       <div class="content">
         <div class="pad">
+          <div class="sec-title"><h2>继续观看</h2></div>
+          <div class="resume">
+            <div class="rcard">
+              <div class="row1">
+                <div class="rtext">
+                  <div class="rt">第 1 集 · 初见</div>
+                  <div class="rm">4kvm.net · 还剩 50:00</div>
+                </div>
+                <span class="rx" data-i="x" data-s="15"></span>
+              </div>
+              <div class="rbar"><i style="width:17%"></i></div>
+            </div>
+            <div class="rcard">
+              <div class="row1">
+                <div class="rtext">
+                  <div class="rt">使用 Jetpack Compose 构建列表</div>
+                  <div class="rm">olevod.com · 看到 12:34</div>
+                </div>
+                <span class="rx" data-i="x" data-s="15"></span>
+              </div>
+              <div class="rbar"><i style="width:64%"></i></div>
+            </div>
+          </div>
           <div class="sec-title"><h2>快捷入口</h2><a>编辑</a></div>
           <div class="shortcuts">
-            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#1772f6,#0b4fd1)">知</div><span>知乎</span></div>
-            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#fb7299,#e34a75)">B</div><span>哔哩哔哩</span></div>
-            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#f5c518,#e0a800)">微</div><span>微博</span></div>
-            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#3a4a5e,#1e2733)">G</div><span>GitHub</span></div>
-            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#1e80ff,#0a5bd3)">掘</div><span>掘金</span></div>
-            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#ff5000,#d63f00)">淘</div><span>淘宝</span></div>
-            <div class="sc"><div class="tile" style="background:linear-gradient(135deg,#ff0033,#c00)">Y</div><span>YouTube</span></div>
+            <div class="sc"><div class="tile"><i class="fav" style="background:linear-gradient(135deg,#1772f6,#0b4fd1)">知</i></div><span>知乎</span></div>
+            <div class="sc"><div class="tile"><i class="fav" style="background:linear-gradient(135deg,#fb7299,#e34a75)">B</i></div><span>哔哩哔哩</span></div>
+            <div class="sc"><div class="tile"><i class="fav" style="background:linear-gradient(135deg,#f5c518,#e0a800)">微</i></div><span>微博</span></div>
+            <div class="sc"><div class="tile"><i class="fav" style="background:linear-gradient(135deg,#3a4a5e,#1e2733)">G</i></div><span>GitHub</span></div>
+            <div class="sc"><div class="tile"><i class="fav" style="background:linear-gradient(135deg,#1e80ff,#0a5bd3)">掘</i></div><span>掘金</span></div>
+            <div class="sc"><div class="tile"><i class="fav" style="background:linear-gradient(135deg,#ff5000,#d63f00)">淘</i></div><span>淘宝</span></div>
+            <div class="sc"><div class="tile"><i class="fav" style="background:linear-gradient(135deg,#ff0033,#c00)">Y</i></div><span>YouTube</span></div>
             <div class="sc add"><div class="tile"><span data-i="plus" data-s="22"></span></div><span>添加</span></div>
           </div>
 
@@ -702,35 +750,35 @@ LazyColumn(<br>
       <div class="content">
         <div class="tab-grid">
           <div class="tabcard active">
-            <div class="prev"><div class="glow"></div><span class="fav" style="background:#1a73e8">G</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="prev"><div class="shot"><i style="width:46%%"></i><i class="hero"></i><i style="width:88%%"></i><i style="width:72%%"></i></div><span class="cl" data-i="x" data-s="15"></span></div>
             <div class="cap"><span class="tt">使用 Jetpack Compose 构建列表</span></div>
           </div>
           <div class="tabcard">
-            <div class="prev"><div class="glow"></div><span class="fav" style="background:#1772f6">知</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="prev"><div class="shot"><i style="width:38%"></i><i style="width:92%"></i><i style="width:76%"></i><i style="width:84%"></i></div><span class="cl" data-i="x" data-s="15"></span></div>
             <div class="cap"><span class="tt">如何评价 Compose 的延迟布局</span></div>
           </div>
           <div class="tabcard">
-            <div class="prev" style="background:linear-gradient(160deg,#2a1f3a,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(251,114,153,.3), transparent 70%)"></div><span class="fav" style="background:#fb7299">B</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="prev"><div class="shot"><i class="hero" style="background:linear-gradient(135deg,#fb7299,#e34a75)"></i><i style="width:70%"></i><i style="width:86%"></i><i style="width:54%"></i></div><span class="cl" data-i="x" data-s="15"></span></div>
             <div class="cap"><span class="tt">Compose 共享元素转场实战</span></div>
           </div>
           <div class="tabcard">
-            <div class="prev" style="background:linear-gradient(160deg,#3a2f18,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(245,197,24,.28), transparent 70%)"></div><span class="fav" style="background:#f5c518">微</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="prev"><div class="shot"><i style="width:52%"></i><i class="hero" style="background:linear-gradient(135deg,#f5c518,#e0a800)"></i><i style="width:80%"></i><i style="width:66%"></i></div><span class="cl" data-i="x" data-s="15"></span></div>
             <div class="cap"><span class="tt">今日热搜：浏览器内核更新</span></div>
           </div>
           <div class="tabcard">
-            <div class="prev" style="background:linear-gradient(160deg,#1b3a2e,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(34,197,94,.28), transparent 70%)"></div><span class="fav" style="background:#22c55e">掘</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="prev"><div class="shot"><i style="width:44%"></i><i style="width:90%"></i><i class="hero" style="background:linear-gradient(135deg,#22c55e,#12894a)"></i><i style="width:62%"></i></div><span class="cl" data-i="x" data-s="15"></span></div>
             <div class="cap"><span class="tt">一次点击背后：追踪器拦截原理</span></div>
           </div>
           <div class="tabcard inc">
-            <div class="prev"><div class="glow"></div><span class="fav" style="background:#334155"><span data-i="eye-slash" data-s="13"></span></span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="prev"><div class="none"><span data-i="eye-slash" data-s="22"></span></div><span class="cl" data-i="x" data-s="15"></span></div>
             <div class="cap"><span class="tt">无痕标签页</span></div>
           </div>
           <div class="tabcard">
-            <div class="prev" style="background:linear-gradient(160deg,#1f2a44,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(124,58,237,.28), transparent 70%)"></div><span class="fav" style="background:#7c3aed">M</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="prev"><div class="none"><span data-i="image" data-s="20"></span></div><span class="cl" data-i="x" data-s="15"></span></div>
             <div class="cap"><span class="tt">Material 3 设计令牌指南</span></div>
           </div>
           <div class="tabcard">
-            <div class="prev" style="background:linear-gradient(160deg,#16233a,#0e1626)"><div class="glow" style="background:radial-gradient(60% 60% at 30% 25%, rgba(14,165,233,.3), transparent 70%)"></div><span class="fav" style="background:#0ea5e9">K</span><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="prev"><div class="shot"><i style="width:56%"></i><i style="width:84%"></i><i style="width:74%"></i><i class="hero" style="background:linear-gradient(135deg,#0ea5e9,#0369a1)"></i></div><span class="cl" data-i="x" data-s="15"></span></div>
             <div class="cap"><span class="tt">Kotlin Flow 冷流与热流</span></div>
           </div>
         </div>
@@ -776,34 +824,34 @@ LazyColumn(<br>
           <span data-i="caret-down" data-s="16" style="color:var(--color-text-muted)"></span>
         </div>
         <div class="tabrow">
-          <span class="fav" style="background:#1a73e8">G</span>
+          <span class="thumb"><i style="top:6px;width:24px"></i><i style="top:12px;width:36px"></i><i style="top:18px;width:28px"></i></span>
           <div class="main"><div class="tt">使用 Jetpack Compose 构建列表</div><div class="dm">developer.android.com</div></div>
           <span class="cl" data-i="x" data-s="16"></span>
         </div>
         <div class="tabrow">
-          <span class="fav" style="background:#1772f6">知</span>
+          <span class="thumb"><i style="top:5px;width:34px"></i><i style="top:11px;width:20px"></i><i style="top:17px;width:30px"></i></span>
           <div class="main"><div class="tt">如何评价 Compose 的延迟布局</div><div class="dm">zhihu.com</div></div>
           <span class="cl" data-i="x" data-s="16"></span>
         </div>
         <div class="tabrow">
-          <span class="fav" style="background:#1e80ff">掘</span>
+          <span class="thumb"><i style="top:6px;width:30px"></i><i style="top:12px;width:22px"></i><i style="top:18px;width:34px"></i></span>
           <div class="main"><div class="tt">Compose 1.11 性能优化清单</div><div class="dm">juejin.cn</div></div>
           <span class="cl" data-i="x" data-s="16"></span>
         </div>
         <div class="tabrow">
-          <span class="fav" style="background:#3a4a5e">G</span>
+          <span class="thumb"><i style="top:5px;width:26px"></i><i style="top:11px;width:38px"></i><i style="top:17px;width:24px"></i></span>
           <div class="main"><div class="tt">androidx.compose.lazy — API 参考</div><div class="dm">github.com</div></div>
           <span class="cl" data-i="x" data-s="16"></span>
         </div>
 
         <div class="grp-title">其他标签页 · 2</div>
         <div class="tabrow">
-          <span class="fav" style="background:#fb7299">B</span>
+          <span class="thumb"><i style="top:6px;width:36px"></i><i style="top:12px;width:28px"></i><i style="top:18px;width:20px"></i></span>
           <div class="main"><div class="tt">Compose 共享元素转场实战</div><div class="dm">bilibili.com</div></div>
           <span class="cl" data-i="x" data-s="16"></span>
         </div>
         <div class="tabrow">
-          <span class="fav" style="background:#f5c518">微</span>
+          <span class="thumb"><i style="top:5px;width:22px"></i><i style="top:11px;width:34px"></i><i style="top:17px;width:30px"></i></span>
           <div class="main"><div class="tt">今日热搜：浏览器内核更新</div><div class="dm">weibo.com</div></div>
           <span class="cl" data-i="x" data-s="16"></span>
         </div>
@@ -869,9 +917,11 @@ LazyColumn(<br>
           <div class="act"><span class="ic" data-i="gear-six" data-s="22"></span><span>设置</span></div>
         </div>
         <div class="sheet-rows">
-          <div class="srow"><span class="ic" data-i="shield-check" data-s="20"></span><span class="lb">隐私与安全</span><span class="vl">已拦截 1,284</span><span class="go" data-i="caret-right" data-s="16" style="color:var(--color-text-disabled)"></span></div>
-          <div class="srow"><span class="ic" data-i="desktop" data-s="20"></span><span class="lb">桌面版网站</span><span class="switch"><i></i></span></div>
+          <div class="sheet-h">页面</div>
+          <div class="srow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">请求桌面版网站</span><span class="vl">已关闭</span><span class="go" data-i="caret-right" data-s="16" style="color:var(--color-text-disabled)"></span></div>
           <div class="srow"><span class="ic" data-i="translate" data-s="20"></span><span class="lb">翻译此页</span><span class="vl">中文</span><span class="go" data-i="caret-right" data-s="16" style="color:var(--color-text-disabled)"></span></div>
+          <div class="sheet-h">更多</div>
+          <div class="srow"><span class="ic" data-i="shield-check" data-s="20"></span><span class="lb">隐私与安全</span><span class="vl">已拦截 1,284</span><span class="go" data-i="caret-right" data-s="16" style="color:var(--color-text-disabled)"></span></div>
           <div class="srow"><span class="ic" data-i="user-circle" data-s="20"></span><span class="lb">已同步</span><span class="vl">2 分钟前</span></div>
         </div>
       </div>
@@ -1186,6 +1236,10 @@ LazyColumn(<br>
           <div class="lrow"><span class="ic" data-i="moon" data-s="20"></span><span class="lb">主题</span><span class="vl">深色</span><span class="go" data-i="caret-right" data-s="16"></span></div>
           <div class="lrow"><span class="ic" data-i="squares-four" data-s="20"></span><span class="lb">主页快捷入口</span><span class="vl">8 个</span><span class="go" data-i="caret-right" data-s="16"></span></div>
         </div>
+        <div class="stg-h">浏览</div>
+        <div class="stg-group">
+          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">请求桌面版网站<small>手机上打不开的站点基本靠它</small></span><span class="switch"><i></i></span></div>
+        </div>
         <div class="stg-h">隐私与安全</div>
         <div class="stg-group">
           <div class="lrow"><span class="ic" data-i="shield-check" data-s="20"></span><span class="lb">追踪器拦截<small>已拦截 12.4 万次</small></span><span class="vl">标准</span><span class="go" data-i="caret-right" data-s="16"></span></div>
@@ -1196,7 +1250,6 @@ LazyColumn(<br>
         <div class="stg-group">
           <div class="lrow"><span class="ic" data-i="magnifying-glass" data-s="20"></span><span class="lb">默认搜索引擎</span><span class="vl">Google</span><span class="go" data-i="caret-right" data-s="16"></span></div>
           <div class="lrow"><span class="ic" data-i="download-simple" data-s="20"></span><span class="lb">下载位置</span><span class="vl">Download/</span><span class="go" data-i="caret-right" data-s="16"></span></div>
-          <div class="lrow"><span class="ic" data-i="desktop" data-s="20"></span><span class="lb">默认桌面版网站</span><span class="switch"><i></i></span></div>
         </div>
         <div class="stg-h">无障碍</div>
         <div class="stg-group">
@@ -1205,7 +1258,7 @@ LazyColumn(<br>
         </div>
         <div class="stg-h">关于</div>
         <div class="stg-group">
-          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.10.0</span></div>
+          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.11.0</span></div>
           <div class="lrow"><span class="ic" data-i="link-simple" data-s="20"></span><span class="lb">开源许可</span><span class="go" data-i="caret-right" data-s="16"></span></div>
         </div>
       </div>

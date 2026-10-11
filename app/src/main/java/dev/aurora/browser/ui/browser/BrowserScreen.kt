@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -48,19 +49,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.aurora.browser.AuroraApp
 import dev.aurora.browser.BrowserViewModelFactory
 import dev.aurora.browser.BuildConfig
 import dev.aurora.browser.data.DownloadItem
 import dev.aurora.browser.data.DownloadsRepository
+import dev.aurora.browser.data.FaviconStore
 import dev.aurora.browser.domain.BackOutcome
+import dev.aurora.browser.domain.model.BrowserTab
 import dev.aurora.browser.media.MediaDownload
 import dev.aurora.browser.media.MediaUrls
 import dev.aurora.browser.media.OfflineItem
 import dev.aurora.browser.media.OfflineMedia
+import dev.aurora.browser.media.PlaybackPreferences
 import dev.aurora.browser.media.PlayerActivity
+import dev.aurora.browser.media.ResumeEntry
 import dev.aurora.browser.ui.cast.CastController
 import dev.aurora.browser.ui.components.ActionGridTile
 import dev.aurora.browser.ui.components.AuroraBottomSheet
@@ -133,13 +140,16 @@ fun BrowserScreen(
     val history by vm.history.collectAsState()
     val engine by vm.searchEngine.collectAsState()
     val blockTrackers by vm.blockTrackers.collectAsState()
+    val desktopMode by vm.desktopMode.collectAsState()
     val trackerCount by vm.trackerCount.collectAsState()
     val sslWarning by vm.sslWarning.collectAsState()
     val message by vm.message.collectAsState()
 
     val controller = remember { MutableBrowserController() }
-    val pool = remember { WebViewPool(context) }
+    // 桌面版设置按取值 lambda 传进池里：池活得比组合久，传值的话新建的标签会读到创建那一刻的旧值。
+    val pool = remember(vm) { WebViewPool(context, desktopMode = { vm.desktopMode.value }) }
     val downloads = remember { DownloadsRepository(context) }
+    val favicons = remember(context) { FaviconStore.get(context) }
     val cast = remember(context) { CastController(context) }
     // 网页视频全屏：View 要挂到窗口内容之上，所以需要 Activity；预览/单测下退化为空实现。
     // 不能直接 `as? Activity`：LocalContext 在带主题包装时是 ContextThemeWrapper，
@@ -164,6 +174,14 @@ fun BrowserScreen(
     var downloadItems by remember { mutableStateOf<List<DownloadItem>>(emptyList()) }
     var offlineItems by remember { mutableStateOf<List<OfflineItem>>(emptyList()) }
     var mediaSheet by remember { mutableStateOf<MediaSheet?>(null) }
+    var resumeItems by remember { mutableStateOf(emptyList<ResumeEntry>()) }
+    var tabThumbnails by remember { mutableStateOf(emptyMap<String, Bitmap>()) }
+
+    // 主页「继续观看」的数据来自内置播放器——另一个界面，但同一个进程、同一个偏好文件。
+    // 每次回到前台重读一遍：不重读的话，看完一集退回来，卡片上还是进去之前的进度。
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        resumeItems = PlaybackPreferences.create(context).resumable()
+    }
 
     /**
      * 开始下载一个已经解析好的地址。
@@ -203,6 +221,13 @@ fun BrowserScreen(
                 offlineItems = OfflineMedia.items(context)
             }
         }
+    }
+
+    // 桌面版开关一变，池里**已经建好**的 WebView 也要跟着换 UA 并重载（新建的那些在
+    // create() 里就已经读到最新值了）。放在这里而不是两个开关各自的点击回调里：菜单和
+    // 设置页改的是同一份设置，走同一条路才不会有一边忘了重载。
+    LaunchedEffect(desktopMode) {
+        pool.applyDesktopMode(desktopMode)
     }
 
     // 一次性提示（剪贴板为空、没有扫码应用……）
@@ -320,6 +345,24 @@ fun BrowserScreen(
                 HomeScreen(
                     onNavigate = { vm.navigate(it) },
                     onSearch = { vm.openOmnibox() },
+                    resume = resumeItems,
+                    favicons = favicons,
+                    // 记住的地址就是可播地址（当时嗅探出来的那条），所以直接交给播放器；
+                    // 标题与来源页一起带上——来源页决定 Referer，标题省得播放器再猜。
+                    onResume = { entry ->
+                        openInPlayer(
+                            context = context,
+                            url = entry.url,
+                            title = entry.title,
+                            referer = entry.referer,
+                            extra = (entry.positionMs / 1000L).toString(),
+                            vm = vm,
+                        )
+                    },
+                    onForgetResume = { entry ->
+                        PlaybackPreferences.create(context).forget(entry.url)
+                        resumeItems = resumeItems.filterNot { it.url == entry.url }
+                    },
                 )
             } else {
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -395,6 +438,7 @@ fun BrowserScreen(
                 )
                 BrowserSurface.TabSwitcher -> TabSwitcherScreen(
                     tabs = tabs, activeId = active.id,
+                    thumbnails = tabThumbnails,
                     onSelect = { vm.selectTab(it) }, onClose = { vm.closeTab(it) },
                     onNewTab = { vm.newTab() }, onNewIncognitoTab = { vm.newIncognitoTab() },
                     onCloseAll = closeAllTabs,
@@ -447,6 +491,8 @@ fun BrowserScreen(
                     onEngineChange = { vm.setSearchEngine(it) },
                     blockTrackers = blockTrackers,
                     onBlockTrackersChange = { vm.setBlockTrackers(it) },
+                    desktopMode = desktopMode,
+                    onDesktopModeChange = { vm.setDesktopMode(it) },
                     onOpenDownloads = {
                         downloadItems = downloads.query()
                         offlineItems = OfflineMedia.items(context)
@@ -470,7 +516,10 @@ fun BrowserScreen(
                     onBack = { controller.goBack() },
                     onForward = { controller.goForward() },
                     onHome = { vm.newTab() },
-                    onTabs = { vm.openTabSwitcher() },
+                    onTabs = {
+                        tabThumbnails = tabThumbnailMap(tabs, active, pool)
+                        vm.openTabSwitcher()
+                    },
                     onMenu = { vm.openMenu() },
                     modifier = Modifier.align(Alignment.BottomCenter),
                     homeSelected = active.isNewTab,
@@ -516,6 +565,22 @@ fun BrowserScreen(
                         onIncognito = { vm.newIncognitoTab() },
                         onPrivacy = { vm.openSurface(BrowserSurface.Privacy) },
                         onSettings = { vm.openSurface(BrowserSurface.Settings) },
+                    )
+                    MenuGroupTitle("页面")
+                    SettingRow(
+                        title = "请求桌面版网站",
+                        subtitle = "换桌面版 UA 并重新加载本页",
+                        icon = AuroraIcons.Globe,
+                        value = if (desktopMode) "已开启" else "已关闭",
+                        onClick = {
+                            vm.closeMenu()
+                            val enabled = !desktopMode
+                            vm.setDesktopMode(enabled)
+                            // 改设置只是第一步：池里的 WebView 是复用实例，真正换 UA 并重载
+                            // 由下面那个 LaunchedEffect(desktopMode) 统一负责，这样从菜单和
+                            // 从设置页改都走同一条路。
+                            vm.showMessage(if (enabled) "已请求桌面版网站" else "已恢复手机版网站")
+                        },
                     )
                     MenuGroupTitle("媒体")
                     SettingRow(
@@ -665,6 +730,24 @@ private fun openInPlayer(
     val startMs = extra.trim().toLongOrNull()?.coerceAtLeast(0L)?.times(1000L) ?: 0L
     runCatching { context.startActivity(PlayerActivity.intent(context, url, title, referer, startMs)) }
         .onFailure { vm.showMessage("无法打开内置播放器") }
+}
+
+/**
+ * 打开标签网格前，拍下当前标签的缩略图，并收集所有标签已有的缩略图。
+ *
+ * 为什么只在「打开网格」这一刻拍：WebView 的画面由渲染进程合成，没挂在窗口上的实例
+ * 画出来是空白——只有当前这个标签是显示着的，其余标签的图只能靠它上次显示时留下的那张。
+ *
+ * 无痕标签不拍：网格上照旧给它画无痕图标，浏览内容也就不落到这张图里。
+ */
+private fun tabThumbnailMap(
+    tabs: List<BrowserTab>,
+    active: BrowserTab,
+    pool: WebViewPool,
+): Map<String, Bitmap> {
+    if (!active.isIncognito) pool.captureThumbnail(active.id)
+    // 以当前标签列表为准重建：已关闭的标签即使池里还留着图，也不再出现在网格里。
+    return tabs.mapNotNull { tab -> pool.thumbnail(tab.id)?.let { tab.id to it } }.toMap()
 }
 
 /** 菜单面板的 4×2 动作网格（规格 5.5）。 */

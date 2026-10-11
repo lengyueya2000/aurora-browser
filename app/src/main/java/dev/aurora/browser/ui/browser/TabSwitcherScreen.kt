@@ -1,5 +1,7 @@
 package dev.aurora.browser.ui.browser
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -16,7 +18,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -43,6 +47,8 @@ fun TabSwitcherScreen(
     modifier: Modifier = Modifier,
     initialLayout: TabLayout = TabLayout.GRID,
     onNewIncognitoTab: () -> Unit = {},
+    /** 标签缩略图，按 tabId 取。没拍到的（空白标签、无痕标签）退回占位图。 */
+    thumbnails: Map<String, Bitmap> = emptyMap(),
 ) {
     val c = Aurora.colors
     var layout by remember { mutableStateOf(initialLayout) }
@@ -87,16 +93,22 @@ fun TabSwitcherScreen(
                     verticalArrangement = Arrangement.spacedBy(AuroraSpacing.m),
                 ) {
                     items(tabs, key = { it.id }) { tab ->
-                        TabCard(tab, selected = tab.id == activeId,
-                            onSelect = { onSelect(tab.id) }, onClose = { onClose(tab.id) })
+                        TabCard(
+                            tab, selected = tab.id == activeId,
+                            thumbnail = thumbnails[tab.id],
+                            onSelect = { onSelect(tab.id) }, onClose = { onClose(tab.id) },
+                        )
                     }
                 }
                 TabLayout.LIST -> LazyColumn(
                     contentPadding = PaddingValues(vertical = AuroraSpacing.s),
                 ) {
                     listItems(tabs, key = { it.id }) { tab ->
-                        TabRowItem(tab, selected = tab.id == activeId,
-                            onSelect = { onSelect(tab.id) }, onClose = { onClose(tab.id) })
+                        TabRowItem(
+                            tab, selected = tab.id == activeId,
+                            thumbnail = thumbnails[tab.id],
+                            onSelect = { onSelect(tab.id) }, onClose = { onClose(tab.id) },
+                        )
                     }
                 }
             }
@@ -165,7 +177,13 @@ private fun IconAction(icon: Int, label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TabCard(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit, onClose: () -> Unit) {
+private fun TabCard(
+    tab: BrowserTab,
+    selected: Boolean,
+    thumbnail: Bitmap?,
+    onSelect: () -> Unit,
+    onClose: () -> Unit,
+) {
     val c = Aurora.colors
     val accent = if (tab.isIncognito) c.brand.copy(alpha = 0.5f) else if (selected) c.brand else c.divider
     Column(
@@ -182,13 +200,21 @@ private fun TabCard(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit, on
                 .background(if (tab.isIncognito) c.bg else c.bgElevated),
             contentAlignment = Alignment.Center,
         ) {
-            if (tab.isIncognito) {
-                Icon(
+            when {
+                tab.isIncognito -> Icon(
                     painter = painterResource(AuroraIcons.Incognito),
                     contentDescription = "无痕标签页",
                     tint = c.brand,
                     modifier = Modifier.size(28.dp),
                 )
+                thumbnail != null -> Image(
+                    bitmap = thumbnail.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                // 还没拍到的标签（空白标签、或拍出来是空白）留一块底色，别让卡片空着。
+                else -> Unit
             }
             // 关闭是独立可点目标，触摸区必须 ≥48dp（全局约束「最小触摸目标 48×48dp」）。
             // 可见的圆形底片仍保持 28dp，由 48dp 触摸区居中包裹它。
@@ -227,7 +253,13 @@ private fun TabCard(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit, on
 }
 
 @Composable
-private fun TabRowItem(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit, onClose: () -> Unit) {
+private fun TabRowItem(
+    tab: BrowserTab,
+    selected: Boolean,
+    thumbnail: Bitmap?,
+    onSelect: () -> Unit,
+    onClose: () -> Unit,
+) {
     val c = Aurora.colors
     Row(
         modifier = Modifier
@@ -245,6 +277,17 @@ private fun TabRowItem(tab: BrowserTab, selected: Boolean, onSelect: () -> Unit,
                 contentDescription = "无痕标签页",
                 tint = c.brand,
                 modifier = Modifier.size(18.dp),
+            )
+        } else if (thumbnail != null) {
+            // 列表视图里的小缩略图：够认出是哪一页就行，不占地方。
+            Image(
+                bitmap = thumbnail.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .width(48.dp)
+                    .height(30.dp)
+                    .clip(RoundedCornerShape(AuroraRadius.xs)),
             )
         }
         Column(modifier = Modifier.weight(1f)) {

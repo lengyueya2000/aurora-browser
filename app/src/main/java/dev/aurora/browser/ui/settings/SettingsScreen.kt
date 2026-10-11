@@ -29,6 +29,8 @@ fun SettingsScreen(
     onEngineChange: (SearchEngine) -> Unit,
     blockTrackers: Boolean,
     onBlockTrackersChange: (Boolean) -> Unit,
+    desktopMode: Boolean,
+    onDesktopModeChange: (Boolean) -> Unit,
     onOpenDownloads: () -> Unit,
     onBack: () -> Unit,
     /** 必填：由调用方传 `BuildConfig.VERSION_NAME`，不给默认值就不会和 versionName 漂移。 */
@@ -51,6 +53,14 @@ fun SettingsScreen(
                 title = "深色模式",
                 subtitle = "Aurora 只提供深色主题，跟随系统字号缩放",
                 value = "已开启",
+            )
+
+            SettingGroup("浏览")
+            SwitchRow(
+                title = "请求桌面版网站",
+                subtitle = "网页按电脑宽度排版：手机上打不开的站点基本靠它",
+                checked = desktopMode,
+                onCheckedChange = onDesktopModeChange,
             )
 
             SettingGroup("隐私与安全")

@@ -389,7 +389,15 @@ class PlayerActivity : ComponentActivity() {
 
     private fun rememberPosition() {
         val exo = player ?: return
-        prefs?.remember(mediaUrl, exo.currentPosition, exo.duration)
+        // 标题与来源页一起存：主页的「继续观看」要显示是哪一集，重开时还要把 Referer
+        // 交回来（见 RefererFallbackDataSource）。
+        prefs?.remember(
+            url = mediaUrl,
+            positionMs = exo.currentPosition,
+            durationMs = exo.duration,
+            title = mediaTitle,
+            referer = mediaReferer,
+        )
     }
 
     companion object {

@@ -33,6 +33,9 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
     private val _block = MutableStateFlow(prefs.getBoolean(KEY_BLOCK, true))
     override val blockTrackers: StateFlow<Boolean> = _block.asStateFlow()
 
+    private val _desktop = MutableStateFlow(prefs.getBoolean(KEY_DESKTOP, false))
+    override val desktopMode: StateFlow<Boolean> = _desktop.asStateFlow()
+
     override fun addBookmark(title: String, url: String) {
         if (url.isBlank()) return
         val next = listOf(Bookmark(title.ifBlank { url }, url, System.currentTimeMillis())) +
@@ -76,6 +79,11 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
         prefs.edit().putBoolean(KEY_BLOCK, enabled).apply()
     }
 
+    override fun setDesktopMode(enabled: Boolean) {
+        _desktop.value = enabled
+        prefs.edit().putBoolean(KEY_DESKTOP, enabled).apply()
+    }
+
     private fun readBookmarks(): List<Bookmark> = readArray(KEY_BOOKMARKS).mapNotNull { o ->
         val url = o.optString("url").takeIf { it.isNotBlank() } ?: return@mapNotNull null
         Bookmark(o.optString("title").ifBlank { url }, url, o.optLong("createdAt"))
@@ -117,5 +125,6 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
         const val KEY_HISTORY = "history"
         const val KEY_ENGINE = "search_engine"
         const val KEY_BLOCK = "block_trackers"
+        const val KEY_DESKTOP = "desktop_mode"
     }
 }

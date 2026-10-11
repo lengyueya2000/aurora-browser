@@ -14,6 +14,7 @@ import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
+import dev.aurora.browser.BrowserIdentity
 import dev.aurora.browser.data.DownloadSpeed
 import dev.aurora.browser.data.estimateTotalBytes
 import java.io.File
@@ -43,11 +44,6 @@ object OfflineMedia {
     private const val DOWNLOAD_THREADS = 3
 
     private const val TITLE_PREFS = "aurora_offline_titles"
-
-    /** 只用来让 CDN 别把默认的 ExoPlayer UA 当成爬虫拦掉。 */
-    private const val BROWSER_USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/124.0.0.0 Mobile Safari/537.36"
 
     private var cacheInstance: SimpleCache? = null
     private var databaseInstance: StandaloneDatabaseProvider? = null
@@ -126,7 +122,7 @@ object OfflineMedia {
      * 而工厂是复用一份的。
      */
     private fun httpFactory(): DefaultHttpDataSource.Factory =
-        DefaultHttpDataSource.Factory().apply { setUserAgent(BROWSER_USER_AGENT) }
+        DefaultHttpDataSource.Factory().apply { setUserAgent(BrowserIdentity.MOBILE_USER_AGENT) }
 
     /**
      * 把一条流交给下载服务。

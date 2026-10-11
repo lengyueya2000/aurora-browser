@@ -19,6 +19,9 @@ interface BrowserStore {
     val searchEngine: StateFlow<SearchEngine>
     val blockTrackers: StateFlow<Boolean>
 
+    /** 请求桌面版网站：给 WebView 换一个桌面 UA。 */
+    val desktopMode: StateFlow<Boolean>
+
     fun addBookmark(title: String, url: String)
     fun removeBookmark(url: String)
     fun recordVisit(title: String, url: String)
@@ -26,6 +29,7 @@ interface BrowserStore {
 
     fun setSearchEngine(engine: SearchEngine)
     fun setBlockTrackers(enabled: Boolean)
+    fun setDesktopMode(enabled: Boolean)
 
     companion object {
         /** 历史上限：只保留最近这么多条，避免持久化文件无限增长。 */
@@ -39,6 +43,7 @@ class InMemoryBrowserStore(
     history: List<HistoryEntry> = emptyList(),
     engine: SearchEngine = SearchEngine.Default,
     block: Boolean = true,
+    desktop: Boolean = false,
 ) : BrowserStore {
 
     private val _bookmarks = MutableStateFlow(bookmarks)
@@ -52,6 +57,9 @@ class InMemoryBrowserStore(
 
     private val _block = MutableStateFlow(block)
     override val blockTrackers: StateFlow<Boolean> = _block.asStateFlow()
+
+    private val _desktop = MutableStateFlow(desktop)
+    override val desktopMode: StateFlow<Boolean> = _desktop.asStateFlow()
 
     override fun addBookmark(title: String, url: String) {
         if (url.isBlank()) return
@@ -75,6 +83,7 @@ class InMemoryBrowserStore(
 
     override fun setSearchEngine(engine: SearchEngine) { _engine.value = engine }
     override fun setBlockTrackers(enabled: Boolean) { _block.value = enabled }
+    override fun setDesktopMode(enabled: Boolean) { _desktop.value = enabled }
 
     private var clock: Long = 0
     private fun now(): Long = clock++

@@ -67,12 +67,14 @@ class BrowserViewModel(
     val history: StateFlow<List<HistoryEntry>> = store.history
     val searchEngine: StateFlow<SearchEngine> = store.searchEngine
     val blockTrackers: StateFlow<Boolean> = store.blockTrackers
+    val desktopMode: StateFlow<Boolean> = store.desktopMode
 
     fun addBookmark(title: String, url: String) = store.addBookmark(title, url)
     fun removeBookmark(url: String) = store.removeBookmark(url)
     fun clearHistory() = store.clearHistory()
     fun setSearchEngine(engine: SearchEngine) = store.setSearchEngine(engine)
     fun setBlockTrackers(enabled: Boolean) = store.setBlockTrackers(enabled)
+    fun setDesktopMode(enabled: Boolean) = store.setDesktopMode(enabled)
 
     /** 当前活动页是否已收藏。 */
     fun isBookmarked(url: String?): Boolean =

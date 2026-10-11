@@ -3,6 +3,7 @@ package dev.aurora.browser.ui.browser
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import android.util.Log
 import android.view.View
@@ -35,6 +36,14 @@ import java.io.ByteArrayInputStream
 class WebViewPool(
     private val context: Context,
     private val factory: ((Context) -> WebView)? = null,
+    /**
+     * 当前是否「请求桌面版网站」。
+     *
+     * 为什么是取值的 lambda 而不是一个 `Boolean` 参数：池的生命周期长于组合，而设置是
+     * 组合期才读得到的（见 [blockTrackers] 的同一处理）。传值的话，池里已有的 WebView
+     * 会永远停在创建那一刻的设置上。
+     */
+    private val desktopMode: () -> Boolean = { false },
 ) {
     // 事件出口，由 BrowserScreen 每次组合刷新（见 SideEffect）。
     var onProgress: (tabId: String, progress: Int) -> Unit = { _, _ -> }
@@ -56,6 +65,23 @@ class WebViewPool(
     var blockTrackers: () -> Boolean = { false }
 
     private val views = mutableMapOf<String, WebView>()
+
+    /**
+     * 标签缩略图（标签网格用），按 tabId 存。
+     *
+     * 只放内存、不进磁盘：缩略图是给「现在这些标签」看的，重启后标签本来就没了，
+     * 存下来只是白占空间，还会把浏览过的页面留在磁盘上。
+     */
+    private val thumbnails = mutableMapOf<String, Bitmap>()
+
+    /**
+     * 这台设备 WebView 自带的 UA，第一次建 WebView 时顺手记下来。
+     *
+     * 关掉桌面版时要换回它。不写死一个手机 UA：WebView 版本一变那个字符串就过期了。
+     * 在**创建**时抓（而不是赋值之后）——新建的 WebView 此时还没被我们改过 UA，
+     * 抓到的一定是系统默认值，与桌面版当时是否开着无关。
+     */
+    private var mobileUserAgent: String? = null
 
     /** 桥的方法跑在 WebView 的 JS 线程上，回调宿主前先切回主线程。 */
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
@@ -85,6 +111,9 @@ class WebViewPool(
 
     fun dispose(tabId: String) {
         MediaSniffer.clear(tabId)
+        // 不 recycle：位图可能还在标签网格里画着，手动回收会让它在下一帧崩掉。
+        // 位图在现代 Android 上就在 Java 堆里，去掉引用就够了。
+        thumbnails.remove(tabId)
         views.remove(tabId)?.let(::destroy)
     }
 
@@ -92,10 +121,78 @@ class WebViewPool(
         views.keys.forEach { MediaSniffer.clear(it) }
         views.values.forEach(::destroy)
         views.clear()
+        thumbnails.clear()
     }
 
     /** 仅供测试观察：当前池中活着的标签。 */
     fun retainedTabIds(): Set<String> = views.keys.toSet()
+
+    /**
+     * 给某个标签拍一张缩略图，给标签网格用。
+     *
+     * 只能拍**正在显示**的那个标签：WebView 的画面由渲染进程合成，没挂在窗口上的实例
+     * 画出来是空白。所以调用时机都是「它正显示着」——打开标签网格的那一刻、切走之前。
+     * 拍过的存在 [thumbnails] 里，之后切走也能继续用。
+     *
+     * 失败或拍到一张纯色（没画上东西）时回 `null`，让网格退回占位图——比给用户看一块
+     * 白板诚实。空白标签、还没布局过的 WebView 也都回 `null`。
+     */
+    fun captureThumbnail(tabId: String): Bitmap? {
+        val web = views[tabId] ?: return null
+        if (web.width <= 0 || web.height <= 0 || web.url == null) return null
+        val bitmap = runCatching {
+            Bitmap.createBitmap(ThumbnailWidth, ThumbnailHeight, Bitmap.Config.RGB_565)
+        }.getOrNull() ?: return null
+        val drawn = runCatching {
+            val canvas = Canvas(bitmap)
+            // 画布按缩略图尺寸缩放过，等于把整个视口缩着画进去。
+            canvas.scale(
+                ThumbnailWidth.toFloat() / web.width,
+                ThumbnailHeight.toFloat() / web.height,
+            )
+            web.draw(canvas)
+        }.isSuccess
+        if (!drawn || isBlankThumbnail(bitmap)) {
+            bitmap.recycle()
+            return null
+        }
+        thumbnails.put(tabId, bitmap)
+        return bitmap
+    }
+
+    /** 上次拍到的缩略图；没拍过（或拍出来是空白）时为 null。 */
+    fun thumbnail(tabId: String): Bitmap? = thumbnails[tabId]
+
+    /**
+     * 切换「请求桌面版网站」。
+     *
+     * 光改 UA 不够，还得**重新请求**：站点是拿 UA 决定发哪套页面的，已经在看的这一页
+     * 还是按老 UA 发下来的那一套，不重载就只是「下次打开才是桌面版」——用户点了开关
+     * 却看不出任何变化。
+     *
+     * 空白标签不重载（`url == null`）：没什么可刷新的，白白发一次请求。无痕标签也一样
+     * 处理——UA 本来就不是用来隔离身份的。
+     */
+    fun applyDesktopMode(enabled: Boolean) {
+        views.values.forEach { view ->
+            if (applyUserAgent(view, enabled) && view.url != null) {
+                runCatching { view.reload() }
+            }
+        }
+    }
+
+    /**
+     * 把桌面版设置写进某个 WebView 的 UA。
+     *
+     * 返回 UA 是否真的变了——没变就不必重载，见 [applyDesktopMode]。
+     */
+    private fun applyUserAgent(webView: WebView, enabled: Boolean): Boolean {
+        if (mobileUserAgent == null) mobileUserAgent = webView.settings.userAgentString
+        val target = DesktopMode.userAgentFor(enabled, mobileUserAgent) ?: return false
+        if (webView.settings.userAgentString == target) return false
+        webView.settings.userAgentString = target
+        return true
+    }
 
     /**
      * 在页面里执行 JS，并把返回值当 JSON 解析成 `[标题, 正文]`。
@@ -144,6 +241,40 @@ class WebViewPool(
 
     companion object {
         private const val TAG = "AuroraWebView"
+
+        /**
+         * 缩略图的像素尺寸。5:3 贴近网格卡片的预览框比例（2 列网格里约 158×96dp），
+         * 显示时再按 `ContentScale.Crop` 裁一点。取 320 宽是为了在 3x 屏上也够清楚，
+         * 同时 RGB_565 一张只占 120KB——标签多了也不至于吃内存。
+         */
+        internal const val ThumbnailWidth = 320
+        internal const val ThumbnailHeight = 192
+
+        /** 判断空白缩略图时每条边抽多少个点。 */
+        private const val BlankSampleGrid = 12
+
+        /**
+         * 抽样判断是不是一张纯色图。
+         *
+         * `WebView.draw()` 在个别设备上会画出空白，而空白缩略图比没有缩略图更糟——用户看到的
+         * 是一块白板。真实网页的缩略图不可能每个采样点都同色，所以抽样全同色就当没拍到。
+         * 代价是纯色页面（极少）也会退回占位图。
+         */
+        internal fun isBlankThumbnail(bitmap: Bitmap): Boolean {
+            val stepX = (bitmap.width / BlankSampleGrid).coerceAtLeast(1)
+            val stepY = (bitmap.height / BlankSampleGrid).coerceAtLeast(1)
+            val first = bitmap.getPixel(0, 0)
+            var y = 0
+            while (y < bitmap.height) {
+                var x = 0
+                while (x < bitmap.width) {
+                    if (bitmap.getPixel(x, y) != first) return false
+                    x += stepX
+                }
+                y += stepY
+            }
+            return true
+        }
 
         /** 网页尾部要预留的滚动空间，等于底部悬浮工具栏的完整高度（CSS px 与 dp 同值）。 */
         internal val PageBottomInsetCssPx: Int =
@@ -202,6 +333,7 @@ class WebViewPool(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
             )
             applyHardenedSettings(this, incognito)
+            applyUserAgent(this, desktopMode())
             // 页面上的「下载 / 投屏」按钮靠它回宿主。@JavascriptInterface 的方法只暴露
             // 这一个，且宿主会校验动作名与地址（见 MediaAction）。
             addJavascriptInterface(mediaBridge, MediaOverlay.BRIDGE_NAME)

@@ -49,6 +49,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING,
                     onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
+                    desktopMode = false, onDesktopModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
@@ -68,6 +69,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING,
                     onEngineChange = { picked = it },
                     blockTrackers = true, onBlockTrackersChange = {},
+                    desktopMode = false, onDesktopModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
@@ -83,6 +85,7 @@ class SecondaryScreensTest {
                 SettingsScreen(
                     engine = SearchEngine.BING, onEngineChange = {},
                     blockTrackers = false, onBlockTrackersChange = { block = it },
+                    desktopMode = false, onDesktopModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
@@ -101,6 +104,7 @@ class SecondaryScreensTest {
                 SettingsScreen(
                     engine = SearchEngine.BING, onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
+                    desktopMode = false, onDesktopModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
@@ -116,6 +120,7 @@ class SecondaryScreensTest {
                 SettingsScreen(
                     engine = SearchEngine.BING, onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
+                    desktopMode = false, onDesktopModeChange = {},
                     onOpenDownloads = { opened++ }, onBack = { back++ }, versionName = "9.9-test",
                 )
             }
@@ -392,6 +397,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING,
                     onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
+                    desktopMode = false, onDesktopModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }

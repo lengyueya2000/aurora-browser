@@ -1,6 +1,8 @@
 package dev.aurora.browser.ui.browser
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import android.os.Looper
 import android.view.View
@@ -31,6 +33,9 @@ class WebViewPoolTest {
     }
 
     private fun newPool(f: CountingFactory) = WebViewPool(context, f.factory)
+
+    private fun newDesktopPool(f: CountingFactory, desktop: () -> Boolean) =
+        WebViewPool(context, f.factory, desktop)
 
     private class FakeRequest(private val raw: String, private val mainFrame: Boolean = true) :
         WebResourceRequest {
@@ -445,5 +450,124 @@ class WebViewPoolTest {
         var raw: String? = "sentinel"
         pool.evaluateRaw("missing", "1+1") { raw = it }
         assertThat(raw).isNull()
+    }
+
+    // ---------- 请求桌面版网站 ----------
+
+    /**
+     * 开关一拨，**已经建好**的标签也要换 UA，并且要重新加载。
+     *
+     * 只改 UA 不重载的话，用户点了开关看到的是同一个手机版页面——站点早在发页面时
+     * 就按老 UA 决定了给哪一套。
+     */
+    @Test fun applyDesktopModeSwitchesUserAgentAndReloads() {
+        val f = CountingFactory()
+        val pool = newDesktopPool(f) { false }
+        val web = pool.get("a", false)
+        val deviceDefault = web.settings.userAgentString
+        web.loadUrl("https://a.com")
+        assertThat(deviceDefault).isNotEmpty()
+
+        pool.applyDesktopMode(true)
+        assertThat(web.settings.userAgentString).isEqualTo(DesktopMode.DESKTOP_USER_AGENT)
+        assertThat(shadowOf(web).reloadInvocations).isEqualTo(1)
+
+        pool.applyDesktopMode(false)
+        assertThat(web.settings.userAgentString).isEqualTo(deviceDefault)
+        assertThat(shadowOf(web).reloadInvocations).isEqualTo(2)
+    }
+
+    /** 空白标签没什么可刷新的，别平白发一次请求。 */
+    @Test fun applyDesktopModeDoesNotReloadAnEmptyTab() {
+        val pool = newDesktopPool(CountingFactory()) { false }
+        val web = pool.get("a", false)
+        pool.applyDesktopMode(true)
+        assertThat(web.settings.userAgentString).isEqualTo(DesktopMode.DESKTOP_USER_AGENT)
+        assertThat(shadowOf(web).reloadInvocations).isEqualTo(0)
+    }
+
+    /** UA 没变就不重载：每次回到前台都会走一遍这里，白重载等于页面莫名其妙自己刷新。 */
+    @Test fun applyDesktopModeIsANoOpWhenTheUserAgentAlreadyMatches() {
+        val pool = newDesktopPool(CountingFactory()) { false }
+        val web = pool.get("a", false)
+        web.loadUrl("https://a.com")
+        pool.applyDesktopMode(true)
+        pool.applyDesktopMode(true)
+        assertThat(shadowOf(web).reloadInvocations).isEqualTo(1)
+    }
+
+    /** 池是复用的，新标签得读到**当前**设置，而不是池创建那一刻的值。 */
+    @Test fun tabsCreatedWhileDesktopModeIsOnStartDesktop() {
+        var desktop = false
+        val pool = newDesktopPool(CountingFactory()) { desktop }
+        assertThat(pool.get("a", false).settings.userAgentString)
+            .isNotEqualTo(DesktopMode.DESKTOP_USER_AGENT)
+
+        desktop = true
+        assertThat(pool.get("b", false).settings.userAgentString)
+            .isEqualTo(DesktopMode.DESKTOP_USER_AGENT)
+    }
+
+    // ---------- 标签缩略图 ----------
+
+    @Test fun noThumbnailBeforeAnyCapture() {
+        val pool = newPool(CountingFactory())
+        pool.get("a", false)
+        assertThat(pool.thumbnail("a")).isNull()
+    }
+
+    /** 标签不存在时回 null，别让调用方去处理异常。 */
+    @Test fun capturingAnUnknownTabReturnsNull() {
+        val pool = newPool(CountingFactory())
+        assertThat(pool.captureThumbnail("missing")).isNull()
+    }
+
+    /** 空白标签页没有内容可拍，也就没有缩略图。 */
+    @Test fun capturingATabWithoutAPageReturnsNull() {
+        val pool = newPool(CountingFactory())
+        val web = pool.get("a", false)
+        assertThat(web.url).isNull()
+        assertThat(pool.captureThumbnail("a")).isNull()
+        assertThat(pool.thumbnail("a")).isNull()
+    }
+
+    /**
+     * 拍出来是空白就不当缩略图缓存。
+     *
+     * Robolectric 画不出真实的网页画面，`draw()` 得到的是一张纯色图，正好走在这条分支上；
+     * 真机上则是 WebView 渲染失败的情形。两种情况的处理一致：宁可让网格退回占位图，
+     * 也不要给用户看一块白板。
+     */
+    @Test fun aBlankCaptureIsNotCached() {
+        val pool = newPool(CountingFactory())
+        val web = pool.get("a", false)
+        web.layout(0, 0, 720, 1280)
+        web.loadUrl("https://a.com")
+        assertThat(pool.captureThumbnail("a")).isNull()
+        assertThat(pool.thumbnail("a")).isNull()
+    }
+
+    /** 关闭标签时缩略图一起丢掉，不然内存里会留着已经关掉的页面。 */
+    @Test fun disposingATabForgetsItsThumbnail() {
+        val pool = newPool(CountingFactory())
+        pool.get("a", false)
+        pool.dispose("a")
+        assertThat(pool.thumbnail("a")).isNull()
+    }
+
+    /** 纯色图判为空白，有一点变化就算拍到了。 */
+    @Test fun blankDetectionSamplesTheWholeImage() {
+        val uniform = Bitmap.createBitmap(320, 192, Bitmap.Config.RGB_565)
+        assertThat(WebViewPool.isBlankThumbnail(uniform)).isTrue()
+
+        // 抽样只看网格上的点，所以这里造一块成片的色差（真实页面必然有），
+        // 而不是改一个像素——那可能正好落在采样点之间。
+        val withContent = Bitmap.createBitmap(320, 192, Bitmap.Config.RGB_565)
+        withContent.eraseColor(android.graphics.Color.WHITE)
+        Canvas(withContent).drawRect(
+            0f, 96f, 320f, 192f,
+            android.graphics.Paint().apply { color = android.graphics.Color.RED },
+        )
+        assertThat(WebViewPool.isBlankThumbnail(withContent)).isFalse()
     }
 }

@@ -1,5 +1,6 @@
 package dev.aurora.browser.ui.browser
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,6 +42,7 @@ class TabSwitcherScreenTest {
         onSelect: (String) -> Unit = {}, onClose: (String) -> Unit = {},
         onNewTab: () -> Unit = {}, onCloseAll: () -> Unit = {}, onDone: () -> Unit = {},
         onNewIncognitoTab: () -> Unit = {},
+        thumbnails: Map<String, Bitmap> = emptyMap(),
     ) = compose.setContent {
         AuroraTheme {
             TabSwitcherScreen(
@@ -48,8 +50,38 @@ class TabSwitcherScreenTest {
                 onSelect = onSelect, onClose = onClose,
                 onNewTab = onNewTab, onCloseAll = onCloseAll, onDone = onDone,
                 onNewIncognitoTab = onNewIncognitoTab,
+                thumbnails = thumbnails,
             )
         }
+    }
+
+    // ---------- 缩略图 ----------
+
+    /**
+     * 缩略图只是预览框里的画面，不改变卡片的可点区域与关闭按钮——点标签卡仍然是切标签。
+     */
+    @Test fun aThumbnailDoesNotTakeOverTheCardClick() {
+        var selected: String? = null
+        render(
+            onSelect = { selected = it },
+            thumbnails = mapOf("a" to Bitmap.createBitmap(8, 8, Bitmap.Config.RGB_565)),
+        )
+        compose.onNodeWithText("A 站").performClick()
+        assertThat(selected).isEqualTo("a")
+    }
+
+    /** 没拍到缩略图的标签（空白标签、拍失败）照常渲染，不能因此少一张卡。 */
+    @Test fun tabsWithoutThumbnailsStillRender() {
+        render(thumbnails = mapOf("a" to Bitmap.createBitmap(8, 8, Bitmap.Config.RGB_565)))
+        compose.onAllNodesWithText("A 站").assertCountEquals(1)
+        compose.onAllNodesWithText("B 站").assertCountEquals(1)
+        compose.onAllNodesWithText("新标签页").assertCountEquals(1)
+    }
+
+    /** 关闭按钮仍然只有卡片上那一个——缩略图不能把它挤掉或盖住。 */
+    @Test fun theCloseButtonSurvivesAThumbnail() {
+        render(thumbnails = mapOf("a" to Bitmap.createBitmap(8, 8, Bitmap.Config.RGB_565)))
+        compose.onAllNodesWithContentDescription("关闭标签页").assertCountEquals(3)
     }
 
     @Test fun showsTabCountIncludingSingular() {

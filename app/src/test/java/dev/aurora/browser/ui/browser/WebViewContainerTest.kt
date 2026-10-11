@@ -96,7 +96,7 @@ class WebViewContainerTest {
      */
     @Test fun doesNotReloadWhenUrlIsUnchanged() {
         var created: CountingWebView? = null
-        val pool = WebViewPool(context) { ctx -> CountingWebView(ctx).also { created = it } }
+        val pool = WebViewPool(context, factory = { ctx -> CountingWebView(ctx).also { created = it } })
         val urlState = mutableStateOf("https://a.com")
         // 无关状态：读取它可在 url 不变时强制重组，验证「纯重组不触发加载」。
         val tick = mutableStateOf(0)

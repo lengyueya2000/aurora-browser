@@ -95,8 +95,10 @@ class BrowserStoreTest {
         val store = InMemoryBrowserStore()
         store.setSearchEngine(SearchEngine.GOOGLE)
         store.setBlockTrackers(false)
+        store.setDesktopMode(true)
         assertThat(store.searchEngine.value).isEqualTo(SearchEngine.GOOGLE)
         assertThat(store.blockTrackers.value).isFalse()
+        assertThat(store.desktopMode.value).isTrue()
     }
 
     @Test fun historyEntriesKeepTheirTimestamps() {
