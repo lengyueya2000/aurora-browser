@@ -1,22 +1,95 @@
 package dev.aurora.browser.media
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
-import android.graphics.Color
+import android.media.AudioManager
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import dev.aurora.browser.ui.icons.AuroraIcons
+import dev.aurora.browser.ui.theme.Aurora
+import dev.aurora.browser.ui.theme.AuroraRadius
+import dev.aurora.browser.ui.theme.AuroraSpacing
+import dev.aurora.browser.ui.theme.AuroraTheme
+import kotlinx.coroutines.delay
 
 /**
  * 内置播放器（Media3 / ExoPlayer）：网页里的「全屏」走这里。
@@ -27,14 +100,20 @@ import androidx.media3.ui.PlayerView
  * 用户实测的「全屏之后是黑屏」就是这么来的。
  *
  * 换成原生播放器就没有这一层：地址由 [MediaSniffer] 从网络层拿到真实流（HLS 的
- * `.m3u8` 或直链），交给 ExoPlayer 用 Surface 渲染，全屏、横屏、沉浸式都是我们自己
- * 说了算。顺带还能离线播放（见 [OfflineMedia]）。
+ * `.m3u8` 或直链），交给 ExoPlayer 用 Surface 渲染。顺带还能离线播放（见 [OfflineMedia]）。
+ *
+ * 控制层没有用 `PlayerView` 自带的那一套，而是自己画：自带控制条没有清晰度切换、
+ * 没有倍速、没有画面比例，也不跟应用的深色令牌一致。手势与格式判断在 [PlayerGestures]
+ * 与 [PlayerQuality] 里，那两部分是纯计算，能单测。
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 class PlayerActivity : ComponentActivity() {
 
     private var player: ExoPlayer? = null
+    private var trackSelector: DefaultTrackSelector? = null
+    private var prefs: PlaybackPreferences? = null
     private var savedCutoutMode: Int? = null
+    private var mediaUrl: String = ""
 
     /** 方向只根据视频宽高定一次，之后不再抢用户自己的旋转。 */
     private var orientationDecided = false
@@ -46,79 +125,112 @@ class PlayerActivity : ComponentActivity() {
             finish()
             return
         }
+        mediaUrl = url
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
         val referer = intent.getStringExtra(EXTRA_REFERER)?.takeIf { it.isNotBlank() }
+        val preferences = PlaybackPreferences.create(this)
+        prefs = preferences
 
         // 先按横屏摆好：影视内容绝大多数是横的，而国内手机默认开着「方向锁定」，
         // 不主动掰就会一直竖着、视频缩在中间一条。拿到真实宽高后再按需要纠正。
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         savedCutoutMode = ImmersiveMode.enter(this, savedCutoutMode)
+        if (title.isNotBlank()) setTitle(title)
 
-        val view = PlayerView(this).apply {
-            setBackgroundColor(Color.BLACK)
-            useController = true
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-        }
-        setContentView(FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
-            addView(view)
-        })
+        val selector = DefaultTrackSelector(this)
+        trackSelector = selector
 
         val exo = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(
-                DefaultMediaSourceFactory(OfflineMedia.playbackDataSource(this, referer)),
+            // 硬解初始化失败的机器（vivo / OPPO / 部分联发科）自动回退软解，
+            // 而不是直接报错退出。这是「有些视频播不了」最常见的成因。
+            .setRenderersFactory(DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+            .setTrackSelector(selector)
+            // 默认缓冲在弱网下太浅，一卡就重新缓冲。放宽到 20 秒起播、60 秒上限，
+            // 并把「起播前最少缓冲」抬到 2.5 秒——起播慢一点，换卡顿少很多。
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(20_000, 60_000, 2_500, 5_000)
+                    .build(),
             )
             .build()
         player = exo
-        view.player = exo
 
-        exo.addListener(object : Player.Listener {
-            override fun onVideoSizeChanged(videoSize: VideoSize) {
-                // 竖屏短剧掰成横屏同样是错的，所以等真实宽高出来再定方向。
-                if (orientationDecided || videoSize.width == 0 || videoSize.height == 0) return
-                orientationDecided = true
-                requestedOrientation = if (videoSize.width >= videoSize.height) {
-                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                } else {
-                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                }
-            }
+        val dataSourceFactory = OfflineMedia.playbackDataSource(this, referer)
+        val item = MediaItem.fromUri(url)
+        // HLS 显式建源并打开 chunkless 预解析：起播时不必先把分片清单整个拉下来
+        // 才知道有几档码率。其它（直链、DASH）仍交给默认工厂。
+        exo.setMediaSource(
+            if (MediaUrls.isHls(url)) {
+                HlsMediaSource.Factory(dataSourceFactory)
+                    .setAllowChunklessPreparation(true)
+                    .createMediaSource(item)
+            } else {
+                DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(item)
+            },
+        )
 
-            override fun onPlayerError(error: PlaybackException) {
-                // 直白告诉用户失败原因。静默停在黑屏上，用户只会以为是「又黑了」。
-                Toast.makeText(
-                    this@PlayerActivity,
-                    "这个视频播不了：${error.errorCodeName}",
-                    Toast.LENGTH_LONG,
-                ).show()
-                finish()
-            }
-        })
-
-        exo.setMediaItem(MediaItem.fromUri(url))
-        // 从网页里切过来时接着刚才那秒播，而不是从头开始——用户已经看了十分钟，
-        // 一按全屏回到第 0 秒是会被骂的。
-        val startMs = intent.getLongExtra(EXTRA_START_MS, 0L)
+        // 网页里点全屏时带着当时的进度；没有就接上次没看完的位置。
+        val fromPageMs = intent.getLongExtra(EXTRA_START_MS, 0L)
+        val startMs = if (fromPageMs > 0L) fromPageMs else preferences.resumeMs(url)
         if (startMs > 0L) exo.seekTo(startMs)
+        exo.setPlaybackSpeed(preferences.speed())
         exo.playWhenReady = true
-        if (title.isNotBlank()) setTitle(title)
+
+        setContent {
+            AuroraTheme {
+                PlayerScreen(
+                    player = exo,
+                    title = title.ifBlank { url },
+                    trackSelector = selector,
+                    initialSpeed = preferences.speed(),
+                    onSpeedChanged = { preferences.rememberSpeed(it) },
+                    onEnded = { preferences.forget(url) },
+                    onExit = { finish() },
+                    onVideoSize = { size -> applyOrientationFor(size) },
+                    onError = { error ->
+                        // 直白告诉用户失败原因。静默停在黑屏上，用户只会以为是「又黑了」。
+                        Toast.makeText(
+                            this,
+                            "这个视频播不了：${error.errorCodeName}",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                        finish()
+                    },
+                )
+            }
+        }
         exo.prepare()
     }
 
-    /** 退到后台就停：不停的话用户切走了声音还在放。 */
+    /** 竖屏短剧掰成横屏同样是错的，所以等真实宽高出来再定方向，而且只定一次。 */
+    private fun applyOrientationFor(size: VideoSize) {
+        if (orientationDecided || size.width == 0 || size.height == 0) return
+        orientationDecided = true
+        requestedOrientation = if (size.width >= size.height) {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        }
+    }
+
+    /** 退到后台就停：不停的话用户切走了声音还在放。同时把进度存下来。 */
     override fun onStop() {
         super.onStop()
         player?.pause()
+        rememberPosition()
     }
 
     override fun onDestroy() {
+        rememberPosition()
         player?.release()
         player = null
         ImmersiveMode.exit(this, savedCutoutMode)
         super.onDestroy()
+    }
+
+    private fun rememberPosition() {
+        val exo = player ?: return
+        prefs?.remember(mediaUrl, exo.currentPosition, exo.duration)
     }
 
     companion object {
@@ -132,7 +244,7 @@ class PlayerActivity : ComponentActivity() {
          *
          * @param url 已经解析好的可播地址（HLS 播放列表或直链），不是页面里的 `blob:`。
          * @param referer 页面地址：有的 CDN 会校验 Referer。
-         * @param startPositionMs 从第几毫秒接着播；0 表示从头。
+         * @param startPositionMs 从第几毫秒接着播；0 表示用上次记住的位置或从头。
          */
         fun intent(
             context: Context,
@@ -146,5 +258,731 @@ class PlayerActivity : ComponentActivity() {
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_REFERER, referer)
                 .putExtra(EXTRA_START_MS, startPositionMs)
+    }
+}
+
+/** 控制层里正在展开的二级面板。 */
+private enum class PlayerPanel { NONE, SPEED, QUALITY, RESIZE }
+
+/** 手势调整时屏幕中央的提示。 */
+private data class GestureHint(val title: String, val detail: String = "")
+
+/** 画面比例的三档，标签用国内用户熟悉的说法。 */
+@androidx.annotation.OptIn(UnstableApi::class)
+private val RESIZE_OPTIONS = listOf(
+    "适应" to AspectRatioFrameLayout.RESIZE_MODE_FIT,
+    "铺满" to AspectRatioFrameLayout.RESIZE_MODE_FILL,
+    "裁剪" to AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
+)
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+private fun PlayerScreen(
+    player: ExoPlayer,
+    title: String,
+    trackSelector: DefaultTrackSelector,
+    initialSpeed: Float,
+    onSpeedChanged: (Float) -> Unit,
+    onEnded: () -> Unit,
+    onExit: () -> Unit,
+    onVideoSize: (VideoSize) -> Unit,
+    onError: (PlaybackException) -> Unit,
+) {
+    var playing by remember { mutableStateOf(player.isPlaying) }
+    var buffering by remember { mutableStateOf(false) }
+    var positionMs by remember { mutableLongStateOf(player.currentPosition) }
+    var durationMs by remember { mutableLongStateOf(player.duration.coerceAtLeast(0L)) }
+    var controlsVisible by remember { mutableStateOf(true) }
+    var panel by remember { mutableStateOf(PlayerPanel.NONE) }
+    var speed by remember { mutableFloatStateOf(initialSpeed) }
+    var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
+    var qualityOptions by remember { mutableStateOf(emptyList<PlayerQuality.Option>()) }
+    var videoGroups by remember { mutableStateOf(emptyList<TrackGroup>()) }
+    var selectedQuality by remember { mutableStateOf<String?>(null) }
+    var hint by remember { mutableStateOf<GestureHint?>(null) }
+
+    // 拖动进度时不要被播放器自己的进度回调拽回去，所以拖动期间冻结显示的进度。
+    var scrubbing by remember { mutableStateOf(false) }
+    var scrubMs by remember { mutableLongStateOf(0L) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                playing = isPlaying
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                buffering = playbackState == Player.STATE_BUFFERING
+                if (playbackState == Player.STATE_READY) {
+                    durationMs = player.duration.coerceAtLeast(0L)
+                }
+                if (playbackState == Player.STATE_ENDED) {
+                    controlsVisible = true
+                    onEnded()
+                }
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                onVideoSize(videoSize)
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                qualityOptions = PlayerQuality.options(videoTrackInfos(tracks))
+                videoGroups = videoGroupsOf(tracks)
+                selectedQuality = currentQualityLabel(tracks, qualityOptions)
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                onError(error)
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
+    // 进度轮询。200ms 足够让进度条看起来是连续的，又不至于每帧都重组。
+    LaunchedEffect(player) {
+        while (true) {
+            if (!scrubbing) positionMs = player.currentPosition
+            if (durationMs <= 0L) durationMs = player.duration.coerceAtLeast(0L)
+            delay(200)
+        }
+    }
+    LaunchedEffect(hint) {
+        if (hint != null) {
+            delay(1_000)
+            hint = null
+        }
+    }
+    // 控制层自动隐藏：正在播、面板没开、也没在拖进度时才收起来。
+    LaunchedEffect(controlsVisible, playing, panel, scrubbing) {
+        if (controlsVisible && playing && panel == PlayerPanel.NONE && !scrubbing) {
+            delay(3_500)
+            controlsVisible = false
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Aurora.colors.bg),
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    useController = false
+                    setKeepContentOnPlayerReset(true)
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                }
+            },
+            update = { view ->
+                view.player = player
+                view.resizeMode = resizeMode
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        // 手势层铺在画面之上、控制层之下。控制层里没有点击处理的地方不消费事件，
+        // 所以控制层显示时手势照样能用。
+        GestureLayer(
+            player = player,
+            panelOpen = panel != PlayerPanel.NONE,
+            onToggleControls = { controlsVisible = !controlsVisible },
+            onClosePanel = { panel = PlayerPanel.NONE },
+            onHint = { hint = it },
+            onSeekPreview = { target ->
+                scrubbing = true
+                scrubMs = target
+            },
+            onSeekCommit = { target ->
+                player.seekTo(target)
+                scrubbing = false
+            },
+        )
+
+        if (buffering) {
+            CircularProgressIndicator(
+                color = Aurora.colors.brand,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(44.dp),
+            )
+        }
+
+        hint?.let { current -> GestureHintOverlay(current, Modifier.align(Alignment.Center)) }
+
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            PlayerControls(
+                title = title,
+                playing = playing,
+                positionMs = if (scrubbing) scrubMs else positionMs,
+                durationMs = durationMs,
+                speed = speed,
+                qualityLabel = selectedQuality ?: PlayerQuality.AUTO_LABEL,
+                hasQualityChoice = qualityOptions.isNotEmpty(),
+                selectedQuality = selectedQuality,
+                resizeMode = resizeMode,
+                panel = panel,
+                qualityOptions = qualityOptions,
+                onPanel = { panel = it },
+                onTogglePlay = { if (player.isPlaying) player.pause() else player.play() },
+                onSeekBy = { delta ->
+                    val upper = player.duration.coerceAtLeast(0L)
+                    player.seekTo((player.currentPosition + delta).coerceIn(0L, upper))
+                },
+                onScrub = { fraction ->
+                    scrubbing = true
+                    scrubMs = (durationMs * fraction).toLong()
+                },
+                onScrubEnd = { fraction ->
+                    if (durationMs > 0L) player.seekTo((durationMs * fraction).toLong())
+                    scrubbing = false
+                },
+                onSpeed = { value ->
+                    speed = value
+                    player.setPlaybackSpeed(value)
+                    onSpeedChanged(value)
+                    panel = PlayerPanel.NONE
+                },
+                onQuality = { option ->
+                    applyQuality(trackSelector, option, videoGroups)
+                    selectedQuality = option?.label ?: PlayerQuality.AUTO_LABEL
+                    panel = PlayerPanel.NONE
+                },
+                onResize = { mode ->
+                    resizeMode = mode
+                    panel = PlayerPanel.NONE
+                },
+                onExit = onExit,
+            )
+        }
+    }
+}
+
+/**
+ * 左半屏上下滑调亮度、右半屏调音量、横向拖看进度。
+ *
+ * 点击与双击交给 [detectTapGestures]（它能正确区分单击与双击，自己写很容易让
+ * 「双击快进」顺带把控制层开关两次），这里只处理拖动，且拖动一旦判定出主轴就
+ * 消费掉事件，避免和点击手势互相干扰。
+ */
+@Composable
+private fun GestureLayer(
+    player: ExoPlayer,
+    panelOpen: Boolean,
+    onToggleControls: () -> Unit,
+    onClosePanel: () -> Unit,
+    onHint: (GestureHint?) -> Unit,
+    onSeekPreview: (Long) -> Unit,
+    onSeekCommit: (Long) -> Unit,
+) {
+    val context = LocalContext.current
+    val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val activity = context as? Activity
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(player, panelOpen) {
+                if (panelOpen) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val startX = down.position.x
+                    val startY = down.position.y
+                    val width = size.width
+                    val height = size.height
+                    val side = PlayerGestures.sideOf(startX, width)
+                    val maxVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    val startVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    val startBrightness =
+                        activity?.currentBrightness() ?: PlayerGestures.DEFAULT_BRIGHTNESS
+                    val startPosition = player.currentPosition
+                    val duration = player.duration.coerceAtLeast(0L)
+                    var axis = PlayerGestures.Axis.UNDECIDED
+                    var dragDx = 0f
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        // 抬手不能消费：点击/双击由下面那个 detectTapGestures 处理，
+                        // 它一旦看到事件被消费就当成手势取消，单击与双击都会失灵。
+                        if (!change.pressed) break
+                        val dx = change.position.x - startX
+                        val dy = change.position.y - startY
+                        if (axis == PlayerGestures.Axis.UNDECIDED) {
+                            axis = PlayerGestures.axisOf(dx, dy)
+                            if (axis == PlayerGestures.Axis.UNDECIDED) continue
+                        }
+                        dragDx = dx
+                        change.consume()
+                        when (axis) {                            PlayerGestures.Axis.HORIZONTAL -> {
+                                val preview =
+                                    PlayerGestures.seekPreview(startPosition, dx, width, duration)
+                                onSeekPreview(preview.targetMs)
+                                onHint(
+                                    GestureHint(
+                                        PlayerGestures.formatTime(preview.targetMs),
+                                        PlayerGestures.deltaLabel(preview.deltaMs),
+                                    ),
+                                )
+                            }
+
+                            PlayerGestures.Axis.VERTICAL -> if (side == PlayerGestures.Side.LEFT) {
+                                val value = PlayerGestures.brightness(startBrightness, dy, height)
+                                activity?.setBrightness(value)
+                                onHint(GestureHint("亮度 ${(value * 100).toInt()}%"))
+                            } else {
+                                val value = PlayerGestures.volume(startVolume, dy, height, maxVolume)
+                                audio.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
+                                val percent = if (maxVolume > 0) value * 100 / maxVolume else 0
+                                onHint(GestureHint("音量 $percent%"))
+                            }
+
+                            PlayerGestures.Axis.UNDECIDED -> Unit
+                        }
+                    }
+
+                    // 抬手才真正跳转，拖动过程中只预览，免得一路拖一路 seek。
+                    if (axis == PlayerGestures.Axis.HORIZONTAL) {
+                        onSeekCommit(
+                            PlayerGestures.seekPreview(startPosition, dragDx, width, duration).targetMs,
+                        )
+                    }
+                }
+            }
+            .pointerInput(player, panelOpen) {
+                detectTapGestures(
+                    onTap = { if (panelOpen) onClosePanel() else onToggleControls() },
+                    onDoubleTap = { offset ->
+                        val target = PlayerGestures.doubleTapSeekMs(
+                            player.currentPosition,
+                            offset.x,
+                            size.width,
+                            player.duration.coerceAtLeast(0L),
+                        )
+                        player.seekTo(target)
+                        onHint(GestureHint(PlayerGestures.formatTime(target)))
+                    },
+                )
+            },
+    )
+}
+
+/** 控制层：顶部标题与返回，中间播放/暂停与 ±10 秒，底部进度与三个二级面板。 */
+@Composable
+private fun PlayerControls(
+    title: String,
+    playing: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    speed: Float,
+    qualityLabel: String,
+    hasQualityChoice: Boolean,
+    selectedQuality: String?,
+    resizeMode: Int,
+    panel: PlayerPanel,
+    qualityOptions: List<PlayerQuality.Option>,
+    onPanel: (PlayerPanel) -> Unit,
+    onTogglePlay: () -> Unit,
+    onSeekBy: (Long) -> Unit,
+    onScrub: (Float) -> Unit,
+    onScrubEnd: (Float) -> Unit,
+    onSpeed: (Float) -> Unit,
+    onQuality: (PlayerQuality.Option?) -> Unit,
+    onResize: (Int) -> Unit,
+    onExit: () -> Unit,
+) {
+    val colors = Aurora.colors
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(colors.scrim),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = AuroraSpacing.xs, vertical = AuroraSpacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(AuroraSpacing.touchTarget)
+                    .clickable(onClick = onExit),
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(
+                    painter = painterResource(AuroraIcons.Back),
+                    contentDescription = "退出全屏",
+                    colorFilter = ColorFilter.tint(colors.text),
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Text(
+                text = title,
+                color = colors.text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextTransportButton("−10s", "后退 10 秒", colors.text) {
+                onSeekBy(-PlayerGestures.DOUBLE_TAP_SEEK_MS)
+            }
+            Spacer(Modifier.width(AuroraSpacing.l))
+            Box(
+                Modifier
+                    .size(64.dp)
+                    .clickable(onClick = onTogglePlay),
+                contentAlignment = Alignment.Center,
+            ) {
+                PlayPauseGlyph(playing, colors.text, 34.dp)
+            }
+            Spacer(Modifier.width(AuroraSpacing.l))
+            TextTransportButton("+10s", "前进 10 秒", colors.text) {
+                onSeekBy(PlayerGestures.DOUBLE_TAP_SEEK_MS)
+            }
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        if (panel != PlayerPanel.NONE) {
+            PlayerPanelContent(
+                panel = panel,
+                speed = speed,
+                selectedQuality = selectedQuality,
+                resizeMode = resizeMode,
+                qualityOptions = qualityOptions,
+                onSpeed = onSpeed,
+                onQuality = onQuality,
+                onResize = onResize,
+            )
+        }
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = AuroraSpacing.m),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                PlayerGestures.formatTime(positionMs),
+                color = colors.textSecondary,
+                fontSize = 12.sp,
+            )
+            // 拖动中的比例由这里自己记：Slider 的 onValueChangeFinished 不给最终值，
+            // 而回调闭包里读不到同一帧刚更新的外部状态。
+            var dragging by remember { mutableStateOf(false) }
+            var fraction by remember { mutableFloatStateOf(0f) }
+            val shown = when {
+                dragging -> fraction
+                durationMs > 0L -> (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+                else -> 0f
+            }
+            Slider(
+                value = shown,
+                onValueChange = { value ->
+                    dragging = true
+                    fraction = value
+                    onScrub(value)
+                },
+                onValueChangeFinished = {
+                    onScrubEnd(fraction)
+                    dragging = false
+                },
+                colors = SliderDefaults.colors(
+                    thumbColor = colors.brand,
+                    activeTrackColor = colors.brand,
+                    inactiveTrackColor = colors.border,
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = AuroraSpacing.s),
+            )
+            Text(
+                PlayerGestures.formatTime(durationMs),
+                color = colors.textSecondary,
+                fontSize = 12.sp,
+            )
+        }
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.s),
+            horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.s),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ControlChip(PlayerGestures.speedLabel(speed), panel == PlayerPanel.SPEED) {
+                onPanel(if (panel == PlayerPanel.SPEED) PlayerPanel.NONE else PlayerPanel.SPEED)
+            }
+            if (hasQualityChoice) {
+                ControlChip(qualityLabel, panel == PlayerPanel.QUALITY) {
+                    onPanel(if (panel == PlayerPanel.QUALITY) PlayerPanel.NONE else PlayerPanel.QUALITY)
+                }
+            }
+            ControlChip(resizeLabel(resizeMode), panel == PlayerPanel.RESIZE) {
+                onPanel(if (panel == PlayerPanel.RESIZE) PlayerPanel.NONE else PlayerPanel.RESIZE)
+            }
+        }
+    }
+}
+
+/** ±10 秒。用文字而不是图标：图标集里没有「10 秒」这种形状，自造一个不如直接写清楚。 */
+@Composable
+private fun TextTransportButton(
+    label: String,
+    description: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(AuroraSpacing.touchTarget)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = tint,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.semantics { contentDescription = description },
+        )
+    }
+}
+
+/** 播放/暂停：三角形与两条竖条，自己画，省掉一个图标依赖。 */
+@Composable
+private fun PlayPauseGlyph(playing: Boolean, tint: Color, side: Dp) {
+    Canvas(Modifier.size(side)) {
+        if (playing) {
+            val barWidth = size.width * 0.22f
+            val gap = size.width * 0.18f
+            val radius = CornerRadius(barWidth * 0.3f)
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.16f, 0f),
+                size = Size(barWidth, size.height),
+                cornerRadius = radius,
+            )
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.16f + barWidth + gap, 0f),
+                size = Size(barWidth, size.height),
+                cornerRadius = radius,
+            )
+        } else {
+            val path = Path().apply {
+                moveTo(size.width * 0.2f, 0f)
+                lineTo(size.width, size.height / 2f)
+                lineTo(size.width * 0.2f, size.height)
+                close()
+            }
+            drawPath(path, tint)
+        }
+    }
+}
+
+@Composable
+private fun ControlChip(label: String, active: Boolean, onClick: () -> Unit) {
+    val colors = Aurora.colors
+    Text(
+        text = label,
+        color = if (active) colors.brand else colors.text,
+        fontSize = 13.sp,
+        modifier = Modifier
+            .background(
+                color = if (active) colors.surfaceHover else colors.surface.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(AuroraRadius.full),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.xs + 2.dp),
+    )
+}
+
+/** 三个二级面板：倍速、清晰度、画面比例。 */
+@Composable
+private fun PlayerPanelContent(
+    panel: PlayerPanel,
+    speed: Float,
+    selectedQuality: String?,
+    resizeMode: Int,
+    qualityOptions: List<PlayerQuality.Option>,
+    onSpeed: (Float) -> Unit,
+    onQuality: (PlayerQuality.Option?) -> Unit,
+    onResize: (Int) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.s)
+            .background(Aurora.colors.glass, RoundedCornerShape(AuroraRadius.m))
+            .padding(AuroraSpacing.xs),
+    ) {
+        when (panel) {
+            PlayerPanel.SPEED -> PlayerGestures.SPEEDS.forEach { value ->
+                PanelRow(
+                    label = PlayerGestures.speedLabel(value),
+                    selected = value == speed,
+                    onClick = { onSpeed(value) },
+                )
+            }
+
+            PlayerPanel.QUALITY -> {
+                PanelRow(
+                    label = PlayerQuality.AUTO_LABEL,
+                    selected = selectedQuality == PlayerQuality.AUTO_LABEL,
+                    onClick = { onQuality(null) },
+                )
+                qualityOptions.forEach { option ->
+                    PanelRow(
+                        label = option.label,
+                        selected = option.label == selectedQuality,
+                        onClick = { onQuality(option) },
+                    )
+                }
+            }
+
+            PlayerPanel.RESIZE -> RESIZE_OPTIONS.forEach { (label, mode) ->
+                PanelRow(label, mode == resizeMode) { onResize(mode) }
+            }
+
+            PlayerPanel.NONE -> Unit
+        }
+    }
+}
+
+@Composable
+private fun PanelRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    val colors = Aurora.colors
+    Text(
+        text = label,
+        color = if (selected) colors.brand else colors.text,
+        fontSize = 14.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.s + 2.dp),
+    )
+}
+
+@Composable
+private fun GestureHintOverlay(hint: GestureHint, modifier: Modifier = Modifier) {
+    val colors = Aurora.colors
+    Column(
+        modifier
+            .background(colors.glass, RoundedCornerShape(AuroraRadius.s))
+            .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.s),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            hint.title,
+            color = colors.text,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        if (hint.detail.isNotBlank()) {
+            Spacer(Modifier.height(2.dp))
+            Text(hint.detail, color = colors.textMuted, fontSize = 12.sp)
+        }
+    }
+}
+
+private fun resizeLabel(mode: Int): String =
+    RESIZE_OPTIONS.firstOrNull { it.second == mode }?.first ?: "适应"
+
+/** 视频组本身（用于回写清晰度覆盖），顺序与 [videoTrackInfos] 的 `groupIndex` 一致。 */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun videoGroupsOf(tracks: Tracks): List<TrackGroup> =
+    tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }.map { it.mediaTrackGroup }
+
+/** 从当前轨道里挑出视频档位，交给 [PlayerQuality] 整理。 */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun videoTrackInfos(tracks: Tracks): List<PlayerQuality.VideoTrackInfo> {
+    var groupIndex = -1
+    return tracks.groups.flatMap { group ->
+        if (group.type != C.TRACK_TYPE_VIDEO) return@flatMap emptyList()
+        groupIndex++
+        val index = groupIndex
+        (0 until group.length).map { trackIndex ->
+            val format = group.getTrackFormat(trackIndex)
+            PlayerQuality.VideoTrackInfo(
+                groupIndex = index,
+                trackIndex = trackIndex,
+                height = format.height,
+                bitrate = effectiveBitrate(format),
+            )
+        }
+    }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun effectiveBitrate(format: Format): Int =
+    listOf(format.averageBitrate, format.bitrate, format.peakBitrate).firstOrNull { it > 0 } ?: 0
+
+/** 当前正在播的是哪一档，用来在面板上标出「现在是多少」。 */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun currentQualityLabel(
+    tracks: Tracks,
+    options: List<PlayerQuality.Option>,
+): String? {
+    var groupIndex = -1
+    tracks.groups.forEach { group ->
+        if (group.type != C.TRACK_TYPE_VIDEO) return@forEach
+        groupIndex++
+        for (trackIndex in 0 until group.length) {
+            if (group.isTrackSelected(trackIndex)) {
+                return PlayerQuality.labelOf(options, groupIndex, trackIndex)
+                    ?: PlayerQuality.AUTO_LABEL
+            }
+        }
+    }
+    return PlayerQuality.AUTO_LABEL
+}
+
+/** 应用清晰度选择：给视频轨设一条覆盖，或清掉覆盖交回自动。 */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun applyQuality(
+    trackSelector: DefaultTrackSelector,
+    option: PlayerQuality.Option?,
+    videoGroups: List<TrackGroup>,
+) {
+    val builder = trackSelector.buildUponParameters()
+    if (option == null) {
+        builder.clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+    } else {
+        val group = videoGroups.getOrNull(option.groupIndex) ?: return
+        builder.setOverrideForType(TrackSelectionOverride(group, option.trackIndex))
+    }
+    trackSelector.setParameters(builder)
+}
+
+private fun Activity.currentBrightness(): Float {
+    val value = window.attributes.screenBrightness
+    return if (value < 0f) PlayerGestures.DEFAULT_BRIGHTNESS else value
+}
+
+private fun Activity.setBrightness(value: Float) {
+    window.attributes = window.attributes.apply {
+        screenBrightness = value.coerceIn(0f, 1f)
     }
 }

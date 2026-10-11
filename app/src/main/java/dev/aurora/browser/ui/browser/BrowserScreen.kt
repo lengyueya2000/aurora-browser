@@ -57,6 +57,7 @@ import dev.aurora.browser.BuildConfig
 import dev.aurora.browser.data.DownloadItem
 import dev.aurora.browser.data.DownloadsRepository
 import dev.aurora.browser.domain.BackOutcome
+import dev.aurora.browser.media.MediaUrls
 import dev.aurora.browser.media.OfflineItem
 import dev.aurora.browser.media.OfflineMedia
 import dev.aurora.browser.media.PlayerActivity
@@ -162,7 +163,7 @@ fun BrowserScreen(
      * 返回 true 表示已经入队。
      */
     val startDownload: (url: String, title: String) -> Boolean = { url, title ->
-        if (isPlaylistUrl(url)) {
+        if (MediaUrls.isPlaylist(url)) {
             // HLS/DASH 是一堆分片：交给 Media3 的离线缓存，下完能离线播。
             OfflineMedia.enqueue(context, url, title)
             offlineItems = OfflineMedia.items(context)
@@ -636,17 +637,6 @@ private fun openInPlayer(
     val startMs = extra.trim().toLongOrNull()?.coerceAtLeast(0L)?.times(1000L) ?: 0L
     runCatching { context.startActivity(PlayerActivity.intent(context, url, title, referer, startMs)) }
         .onFailure { vm.showMessage("无法打开内置播放器") }
-}
-
-/**
- * 这个地址是不是「流媒体播放列表」（HLS / DASH）。
- *
- * 判断要不要走 Media3 离线缓存的关键：播放列表不能当文件下——系统 `DownloadManager`
- * 只会存下那个几 KB 的文本，视频一个字节都没有。
- */
-private fun isPlaylistUrl(url: String): Boolean {
-    val path = url.substringBefore('?').substringBefore('#').lowercase()
-    return path.endsWith(".m3u8") || path.endsWith(".mpd")
 }
 
 /** 菜单面板的 4×2 动作网格（规格 5.5）。 */
