@@ -1,6 +1,7 @@
 package dev.aurora.browser
 
 import android.app.Application
+import android.webkit.WebView
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import dev.aurora.browser.data.BrowserStore
@@ -20,6 +21,15 @@ import dev.aurora.browser.ui.browser.BrowserViewModel
 class AuroraApp : Application() {
     val tabs: TabRepository by lazy { TabRepository() }
     val store: BrowserStore by lazy { PrefsBrowserStore(this) }
+
+    override fun onCreate() {
+        // debug 构建打开 WebView 远程调试（chrome://inspect），页面里的问题才有得查；
+        // release 关着，免得用户在真机上被接上调试口。
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+        super.onCreate()
+        // 尽早装上：真机上复现不了的闪退，下次启动时能把堆栈原样交出来。
+        CrashLog.install(this)
+    }
 }
 
 /** 把容器喂给 `BrowserViewModel`。 */

@@ -1176,7 +1176,6 @@ LazyColumn(<br>
         <div class="stg-group">
           <div class="lrow"><span class="ic" data-i="moon" data-s="20"></span><span class="lb">主题</span><span class="vl">深色</span><span class="go" data-i="caret-right" data-s="16"></span></div>
           <div class="lrow"><span class="ic" data-i="squares-four" data-s="20"></span><span class="lb">主页快捷入口</span><span class="vl">8 个</span><span class="go" data-i="caret-right" data-s="16"></span></div>
-          <div class="lrow"><span class="ic" data-i="newspaper" data-s="20"></span><span class="lb">主页资讯流</span><span class="switch on"><i></i></span></div>
         </div>
         <div class="stg-h">隐私与安全</div>
         <div class="stg-group">
@@ -1197,8 +1196,73 @@ LazyColumn(<br>
         </div>
         <div class="stg-h">关于</div>
         <div class="stg-group">
-          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.0.0</span></div>
+          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.4.0</span></div>
           <div class="lrow"><span class="ic" data-i="link-simple" data-s="20"></span><span class="lb">开源许可</span><span class="go" data-i="caret-right" data-s="16"></span></div>
+        </div>
+      </div>
+      <div class="gesturebar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────── 13 视频浮层 ───────────── -->
+<style>
+  .vf-box{position:relative;border-radius:var(--radius-md);overflow:hidden;background:#000}
+  .vf-stage{aspect-ratio:16/9;display:grid;place-items:center;
+    background:radial-gradient(120% 90% at 30% 20%, #334155 0%, #0B1120 72%)}
+  .vf-play{width:54px;height:54px;border-radius:var(--radius-full);display:grid;place-items:center;
+    background:rgba(248,250,252,.92);box-shadow:var(--shadow-2)}
+  .vf-play::after{content:'';width:0;height:0;margin-left:4px;
+    border-left:16px solid var(--slate-900);border-top:10px solid transparent;border-bottom:10px solid transparent}
+  .vf-pills{position:absolute;top:8px;right:8px;display:flex;gap:6px}
+  .vf-pill{height:30px;line-height:30px;padding:0 10px;border-radius:var(--radius-full);
+    font-size:12px;white-space:nowrap;color:#e5e7eb;background:rgba(11,17,32,.82);
+    border:1px solid rgba(148,163,184,.35)}
+  .vf-note{font-size:12px;line-height:17px;color:var(--color-text-disabled);margin:10px 0 16px}
+</style>
+<div class="frame-wrap">
+  <div class="frame-cap"><span class="n">13</span><span class="t">视频浮层 · 全屏 / 下载 / 投屏</span>
+    <span class="d">按钮贴在视频右上角；blob/MSE 流式源不给下载与投屏</span></div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span>
+      <span class="sb-right">
+        <svg width="15" height="12" viewBox="0 0 20 14" fill="currentColor" aria-hidden="true"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5" y="6" width="3" height="8" rx="1"/><rect x="10" y="3" width="3" height="11" rx="1"/><rect x="15" y="0" width="3" height="14" rx="1"/></svg>
+        <svg width="15" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4C7.6 4 3.6 5.7.5 8.6l1.8 1.9C5.1 7.9 8.4 6.6 12 6.6s6.9 1.3 9.7 3.9l1.8-1.9C20.4 5.7 16.4 4 12 4Zm0 6.1c-2.8 0-5.3 1.1-7.2 2.8l1.8 1.9c1.5-1.4 3.4-2.2 5.4-2.2s3.9.8 5.4 2.2l1.8-1.9c-1.9-1.7-4.4-2.8-7.2-2.8Zm0 6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8Z"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 14" fill="none" aria-hidden="true"><rect x="1" y="1.5" width="20" height="11" rx="3.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="3.5" width="13" height="7" rx="1.8" fill="currentColor"/><rect x="22.6" y="4.6" width="2.2" height="4.8" rx="1.1" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="screen">
+      <div class="topbar" style="padding-bottom:8px">
+        <div class="omnibox">
+          <span class="site-id" data-i="lock-simple" data-s="14" title="连接安全"></span>
+          <span class="url">video.example.com/watch</span>
+          <button class="ib-btn" aria-label="刷新" data-i="arrow-clockwise" data-s="18"></button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="page" style="padding-bottom:0">
+          <div class="vf-box">
+            <div class="vf-stage"><span class="vf-play"></span></div>
+            <div class="vf-pills">
+              <span class="vf-pill">全屏</span><span class="vf-pill">下载</span><span class="vf-pill">投屏</span>
+            </div>
+          </div>
+          <div class="vf-note">普通视频（<code>http(s)://…mp4</code>）：三个按钮都给。点「下载」直接交给系统 DownloadManager，点「投屏」把地址交给能播 video 的应用。</div>
+
+          <div class="vf-box">
+            <div class="vf-stage"><span class="vf-play"></span></div>
+            <div class="vf-pills"><span class="vf-pill">全屏</span></div>
+          </div>
+          <div class="vf-note" style="margin-bottom:0">流式视频（<code>blob:</code> / MSE，B 站这类都是）：只留「全屏」。下载与投屏按钮不出现——浏览器拿不到那个地址，点了也只能报错，不如不给。</div>
+        </div>
+      </div>
+      <div class="toolbar-wrap">
+        <div class="toolbar">
+          <button class="tb" aria-label="后退" data-i="arrow-left" data-s="22"></button>
+          <button class="tb dis" aria-label="前进" data-i="arrow-right" data-s="22"></button>
+          <button class="tb" aria-label="主页" data-i="house-simple" data-s="22"></button>
+          <button class="tb on" aria-label="标签页，3 个"><span class="num">3</span></button>
+          <button class="tb" aria-label="更多" data-i="dots-three" data-s="24" style="transform:rotate(90deg)"></button>
         </div>
       </div>
       <div class="gesturebar"></div>

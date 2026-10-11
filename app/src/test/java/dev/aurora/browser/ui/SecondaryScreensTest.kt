@@ -1,8 +1,10 @@
 package dev.aurora.browser.ui
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -166,6 +168,30 @@ class SecondaryScreensTest {
         compose.onNodeWithText("C 站").assertExists()
         compose.onNodeWithContentDescription("清空历史").performClick()
         assertThat(cleared).isEqualTo(1)
+    }
+
+    /**
+     * 旧版本存下来的历史里同一地址可能有多条（那时只跟上一条比对去重）。
+     * 列表的 key 用 URL，重复的 key 会让列表直接抛异常——这里必须只画一行。
+     */
+    @Test fun libraryCollapsesDuplicateHistoryUrls() {
+        val duplicated = listOf(
+            HistoryEntry("A 站", "https://a.com", 3),
+            HistoryEntry("A 站", "https://a.com", 2),
+            HistoryEntry("C 站", "https://c.com", 1),
+        )
+        compose.setContent {
+            AuroraTheme {
+                LibraryScreen(
+                    bookmarks = emptyList(), history = duplicated,
+                    onOpen = {}, onRemoveBookmark = {},
+                    onClearHistory = {}, onBack = {},
+                    initialTab = LibraryTab.HISTORY,
+                )
+            }
+        }
+        compose.onAllNodesWithText("A 站").assertCountEquals(1)
+        compose.onNodeWithText("C 站").assertExists()
     }
 
     @Test fun libraryRemovesABookmark() {

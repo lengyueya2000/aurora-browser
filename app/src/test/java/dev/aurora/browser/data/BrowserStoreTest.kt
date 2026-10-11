@@ -58,13 +58,20 @@ class BrowserStoreTest {
         assertThat(store.history.value.first().title).isEqualTo("A 站")
     }
 
-    @Test fun visitingDifferentUrlsAppends() {
+    /**
+     * 回到访问过的页面：历史里只留一条，并把它移到最前。
+     *
+     * 旧实现只跟上一条比对，A→B→A 之后历史里就有两条 A——列表里出现两行一模一样的记录，
+     * Omnibox 的历史建议也跟着重复。
+     */
+    @Test fun revisitingAnEarlierUrlMovesItToTheFrontInsteadOfDuplicating() {
         val store = InMemoryBrowserStore()
         store.recordVisit("A", "https://a.com")
         store.recordVisit("B", "https://b.com")
-        store.recordVisit("A", "https://a.com")
+        store.recordVisit("A 再来", "https://a.com")
         assertThat(store.history.value.map { it.url })
-            .containsExactly("https://a.com", "https://b.com", "https://a.com").inOrder()
+            .containsExactly("https://a.com", "https://b.com").inOrder()
+        assertThat(store.history.value.first().title).isEqualTo("A 再来")
     }
 
     @Test fun historyIsCappedAtTheMaximum() {

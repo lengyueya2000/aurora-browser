@@ -51,11 +51,12 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
         if (url.isBlank()) return
         val entry = HistoryEntry(title.ifBlank { url }, url, System.currentTimeMillis())
         // 同一次导航会触发两次（navigate 时一次，onPageFinished/onReceivedTitle 时又一次，
-        // 刷新也会再触发）：地址与上一条相同时就替换掉它，顺便把「新标签页」这种占位标题
-        // 换成真实标题，而不是在历史里堆两条一样的记录。
-        val head = _history.value.firstOrNull()
-        val next = if (head?.url == url) listOf(entry) + _history.value.drop(1)
-        else (listOf(entry) + _history.value).take(BrowserStore.MAX_HISTORY)
+        // 刷新还会再来），同一个页面本来也会被反复访问：同一地址只留最新的一条并移到最前。
+        //
+        // 只跟上一条比是不够的——A→B→A 之后历史里就有两条 A，列表里会出现两行一模一样的
+        // 记录，Omnibox 的历史建议也跟着重复。
+        val rest = _history.value.filterNot { it.url == url }
+        val next = (listOf(entry) + rest).take(BrowserStore.MAX_HISTORY)
         _history.value = next
         writeHistory(next)
     }

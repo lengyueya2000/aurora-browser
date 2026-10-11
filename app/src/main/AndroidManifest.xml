@@ -35,10 +35,19 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Aurora">
+        <!--
+          configChanges 要把「可能变的全列上」：网页视频进全屏时，系统栏隐藏本身就可能
+          改变 screenLayout / smallestScreenSize，漏掉哪一项都会让 Activity 被销毁重建——
+          刚挂上去的全屏 View 连同页面一起没了，表现就是「点全屏没反应」。
+          全屏还会把界面掰成横屏（见 ActivityFullscreenHost），orientation 同样在其中；
+          colorMode / grammaticalGender / fontWeightAdjustment 是 Android 12+ 单独广播的
+          几项（深色模式、语言性别、系统字重），一并声明，省得又被重建一次。
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden|uiMode">
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|fontScale|layoutDirection|locale|touchscreen|colorMode|grammaticalGender|fontWeightAdjustment">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

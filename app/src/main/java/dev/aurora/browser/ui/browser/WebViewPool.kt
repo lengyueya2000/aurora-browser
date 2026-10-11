@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -16,6 +17,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import dev.aurora.browser.BuildConfig
 import java.io.ByteArrayInputStream
 
 /** WebView 触发的下载请求，交给 UI 层入队（DownloadManager 需要 Context）。 */
@@ -55,9 +57,17 @@ class WebViewPool(
     var onShowFullscreenView: (view: View, callback: WebChromeClient.CustomViewCallback) -> Unit =
         { _, _ -> }
     var onHideFullscreenView: () -> Unit = {}
+    // 页面里注入的「下载 / 投屏」按钮被点（见 MediaOverlay）。回调保证在主线程。
+    var onMediaAction: (action: String, url: String, type: String) -> Unit = { _, _, _ -> }
     var blockTrackers: () -> Boolean = { false }
 
     private val views = mutableMapOf<String, WebView>()
+
+    /** 桥的方法跑在 WebView 的 JS 线程上，回调宿主前先切回主线程。 */
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val mediaBridge = MediaBridge { action, url, type ->
+        main.post { onMediaAction(action, url, type) }
+    }
 
     /** 取（或创建）该标签的 WebView。 */
     fun get(tabId: String, incognito: Boolean): WebView =
@@ -125,6 +135,8 @@ class WebViewPool(
     }
 
     companion object {
+        private const val TAG = "AuroraWebView"
+
         /** 网页尾部要预留的滚动空间，等于底部悬浮工具栏的完整高度（CSS px 与 dp 同值）。 */
         internal val PageBottomInsetCssPx: Int =
             dev.aurora.browser.ui.components.BottomToolbarHeight.value.toInt()
@@ -182,6 +194,9 @@ class WebViewPool(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
             )
             applyHardenedSettings(this, incognito)
+            // 页面上的「下载 / 投屏」按钮靠它回宿主。@JavascriptInterface 的方法只暴露
+            // 这一个，且宿主会校验动作名与地址（见 MediaAction）。
+            addJavascriptInterface(mediaBridge, MediaOverlay.BRIDGE_NAME)
 
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
@@ -190,10 +205,21 @@ class WebViewPool(
 
                 override fun onPageFinished(view: WebView, url: String) {
                     onPageFinished(tabId, view.title.orEmpty(), url)
-                    // 悬浮工具栏盖在网页之上，页面末尾如果不留白，滚到底时最后几行会
-                    // 永久停在工具栏底下、滚也滚不出来。给文档尾部补一段滚动空间。
+                    // 两段脚本合在一次 evaluateJavascript 里注入，省一次跨进程往返：
+                    // - 悬浮工具栏盖在网页之上，页面末尾不留白的话，滚到底时最后几行会
+                    //   永久停在工具栏底下、滚也滚不出来，所以给文档尾部补一段滚动空间；
+                    // - 给页面里的每个 <video> 贴上「全屏 / 下载 / 投屏」浮层。
+                    // 两段都是完整语句的 IIFE，拼起来等价于依次执行。
                     runCatching {
-                        view.evaluateJavascript(bottomInsetScript(PageBottomInsetCssPx), null)
+                        view.evaluateJavascript(
+                            bottomInsetScript(PageBottomInsetCssPx) + "\n" + MediaOverlay.SCRIPT,
+                        ) { raw ->
+                            // 正常是 "ok"；脚本语法错或被站点拦下来时这里会是错误文本，
+                            // debug 构建下留一条日志，省得再靠猜（见 README 的排查记录）。
+                            if (BuildConfig.DEBUG && raw != "\"ok\"") {
+                                Log.d(TAG, "media overlay injection -> $raw")
+                            }
+                        }
                     }
                 }
 

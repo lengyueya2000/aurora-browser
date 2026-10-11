@@ -60,6 +60,8 @@ fun LibraryScreen(
     var tab by remember { mutableStateOf(initialTab) }
     var filter by remember { mutableStateOf("") }
 
+    // 旧版本存下来的历史里同一地址可能有多条（那时只跟上一条比对去重）。列表的 key 必须
+    // 唯一，所以这里按 URL 再兜一次底——顺便把「同一页出现两行」也修掉。
     val rows: List<LibraryRow> = when (tab) {
         LibraryTab.BOOKMARKS -> bookmarks
             .filter { it.matches(filter) }
@@ -67,7 +69,7 @@ fun LibraryScreen(
         LibraryTab.HISTORY -> history
             .filter { it.matches(filter) }
             .map { LibraryRow(it.title, it.url, hostOf(it.url), removable = false) }
-    }
+    }.distinctBy { it.url }
 
     Column(modifier = modifier.fillMaxSize().background(c.bg)) {
         ScreenHeader(
@@ -121,7 +123,7 @@ fun LibraryScreen(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(bottom = AuroraSpacing.xxl),
             ) {
-                items(rows, key = { it.url + it.subtitle }) { row ->
+                items(rows, key = { it.url }) { row ->
                     LibraryRowItem(
                         row = row,
                         onOpen = { onOpen(row.url) },

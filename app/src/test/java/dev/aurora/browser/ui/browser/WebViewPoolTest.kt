@@ -2,6 +2,7 @@ package dev.aurora.browser.ui.browser
 
 import android.content.Context
 import android.net.Uri
+import android.os.Looper
 import android.view.View
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -326,6 +327,30 @@ class WebViewPoolTest {
         val web = pool.get("a", false)
         pool.evaluateVideos("a") { }
         assertThat(shadowOf(web).lastEvaluatedJavascript).isEqualTo(VideoExtractor.SCRIPT)
+    }
+
+    /** 页面加载完要把「全屏 / 下载 / 投屏」浮层注进去（和尾部留白脚本同一次注入）。 */
+    @Test fun pageFinishedInjectsTheMediaOverlay() {
+        val pool = newPool(CountingFactory())
+        val web = pool.get("a", false)
+        shadowOf(web).webViewClient.onPageFinished(web, "https://a.com")
+        assertThat(shadowOf(web).lastEvaluatedJavascript).contains(MediaOverlay.SCRIPT)
+    }
+
+    /**
+     * 页面上的按钮点下去要能到宿主，而且是**在主线程**——桥的方法跑在 WebView 的 JS
+     * 线程上，直接回调会让宿主在非主线程碰 Compose 状态和系统服务。
+     */
+    @Test fun mediaBridgeHopsBackToTheMainThread() {
+        val pool = newPool(CountingFactory())
+        val web = pool.get("a", false)
+        var seen: Triple<String, String, String>? = null
+        pool.onMediaAction = { action, url, type -> seen = Triple(action, url, type) }
+        val bridge = shadowOf(web).getJavascriptInterface(MediaOverlay.BRIDGE_NAME) as MediaBridge
+        bridge.onMediaAction("download", "https://a.com/v.mp4", "video/mp4")
+        assertThat(seen).isNull() // 还没轮到主线程
+        shadowOf(Looper.getMainLooper()).idle()
+        assertThat(seen).isEqualTo(Triple("download", "https://a.com/v.mp4", "video/mp4"))
     }
 
     /** 标签不存在时立刻回空列表，别把回调挂死。 */

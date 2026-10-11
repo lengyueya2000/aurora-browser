@@ -77,6 +77,18 @@ class PrefsBrowserStoreTest {
         assertThat(store.history.value.first().title).isEqualTo("A 站")
     }
 
+    /** 回到访问过的页面：只留一条并移到最前（与内存实现一致）。 */
+    @Test fun revisitingAnEarlierUrlDoesNotDuplicate() {
+        val store = PrefsBrowserStore(context)
+        store.recordVisit("A 站", "https://a.com")
+        store.recordVisit("B 站", "https://b.com")
+        store.recordVisit("A 站再来", "https://a.com")
+        val reopened = PrefsBrowserStore(context).history.value
+        assertThat(reopened.map { it.url })
+            .containsExactly("https://a.com", "https://b.com").inOrder()
+        assertThat(reopened.first().title).isEqualTo("A 站再来")
+    }
+
     /** 存储损坏（外部改过文件、旧版本格式）时宁可当空列表，也不能在启动路径上崩。 */
     @Test fun corruptStoredJsonIsTreatedAsEmpty() {
         prefs().edit().putString("bookmarks", "{not json").putString("history", "[]]").commit()

@@ -36,11 +36,19 @@ class DownloadsRepository(private val context: Context) {
     private val manager: DownloadManager?
         get() = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
 
-    /** 入队。返回下载 id；系统服务不可用时返回 null。 */
-    fun enqueue(request: DownloadRequest, referer: String? = null): Long? {
-        val dm = manager ?: return null
-        val fileName = deriveFileName(request.url, request.contentDisposition, request.mimeType)
+    /**
+     * 入队。返回下载 id；地址不可下载或系统服务不可用时返回 null。
+     *
+     * 整个方法体都在 `runCatching` 里，包括 `DownloadManager.Request` 的**构造**：它的
+     * 构造函数就会对非 http/https 地址抛 `IllegalArgumentException`（`Can only download
+     * HTTP/HTTPS URIs: blob:...`）。只把 `enqueue` 包起来是不够的——视频站的 MSE 播放器
+     * 给出的正是 `blob:` 地址，真机上点「下载视频」会直接闪退。
+     */
+    fun enqueue(request: DownloadRequest, referer: String? = null): Long? = runCatching {
+        val dm = manager ?: return@runCatching null
         val target = Uri.parse(request.url)
+        if (target.scheme?.lowercase() !in DOWNLOADABLE_SCHEMES) return@runCatching null
+        val fileName = deriveFileName(request.url, request.contentDisposition, request.mimeType)
         val req = DownloadManager.Request(target).apply {
             setTitle(fileName)
             setMimeType(request.mimeType)
@@ -50,8 +58,12 @@ class DownloadsRepository(private val context: Context) {
             request.userAgent?.takeIf { it.isNotBlank() }?.let { addRequestHeader("User-Agent", it) }
             referer?.takeIf { it.isNotBlank() }?.let { addRequestHeader("Referer", it) }
         }
-        return runCatching { dm.enqueue(req) }.getOrNull()
-    }
+        dm.enqueue(req)
+    }.getOrNull()
+
+    /** 这个地址能不能交给 `DownloadManager`（它只认 http/https/ftp）。 */
+    fun canDownload(url: String): Boolean =
+        runCatching { Uri.parse(url).scheme?.lowercase() }.getOrNull() in DOWNLOADABLE_SCHEMES
 
     fun query(): List<DownloadItem> {
         val dm = manager ?: return emptyList()
@@ -92,9 +104,13 @@ class DownloadsRepository(private val context: Context) {
     fun contentUri(id: Long): Uri? = runCatching { manager?.getUriForDownloadedFile(id) }.getOrNull()
 
     companion object {
+        /** `DownloadManager` 只接受这三种 scheme。 */
+        val DOWNLOADABLE_SCHEMES = setOf("http", "https", "ftp")
+
         /** 从 Content-Disposition / MIME 推断文件名，兜底用 URL 末段。 */
         fun deriveFileName(url: String, contentDisposition: String?, mimeType: String?): String =
-            URLUtil.guessFileName(url, contentDisposition, mimeType)
+            URLUtil.guessFileName(url, contentDisposition, mimeType)?.takeIf { it.isNotBlank() }
+                ?: "download"
 
         /** 人类可读的体积，用于列表展示。 */
         fun formatSize(bytes: Long): String = when {

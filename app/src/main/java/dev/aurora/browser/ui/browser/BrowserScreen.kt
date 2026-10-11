@@ -3,6 +3,7 @@ package dev.aurora.browser.ui.browser
 import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.speech.RecognizerIntent
@@ -81,6 +82,23 @@ import dev.aurora.browser.ui.theme.AuroraSpacing
 private const val SCAN_ACTION = "com.google.zxing.client.android.SCAN"
 private const val SCAN_RESULT = "SCAN_RESULT"
 
+/**
+ * 从 Context 里解出 Activity。
+ *
+ * Compose 的 `LocalContext` 可能是被包装过的（`ContextThemeWrapper`、各家 ROM 的
+ * `ContextWrapper`），`as? Activity` 会直接失败。逐层剥到 `baseContext` 才靠得住。
+ */
+private fun Context.findActivity(): Activity? {
+    var ctx: Context? = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        val base = ctx.baseContext
+        if (base === ctx) return null
+        ctx = base
+    }
+    return null
+}
+
 /** 主菜单面板内容的高度上限：超出后滚动，避免在矮屏上顶到状态栏。 */
 private val SheetContentMaxHeight = 460.dp
 
@@ -111,7 +129,9 @@ fun BrowserScreen(
     val downloads = remember { DownloadsRepository(context) }
     val cast = remember(context) { CastController(context) }
     // 网页视频全屏：View 要挂到窗口内容之上，所以需要 Activity；预览/单测下退化为空实现。
-    val activity = context as? Activity
+    // 不能直接 `as? Activity`：LocalContext 在带主题包装时是 ContextThemeWrapper，
+    // 转换会静默失败，于是全屏「点了没反应」——必须逐层解包。
+    val activity = remember(context) { context.findActivity() }
     val fullscreen = remember(activity) {
         VideoFullscreenController(activity?.let { ActivityFullscreenHost(it) } ?: NoopFullscreenHost)
     }
@@ -164,6 +184,31 @@ fun BrowserScreen(
         // 视频全屏：WebView 交出要全屏播放的 View，由我们挂到窗口上并切沉浸式。
         pool.onShowFullscreenView = { view, callback -> fullscreen.show(view, callback) }
         pool.onHideFullscreenView = { fullscreen.hide() }
+        // 视频画面上的「下载 / 投屏」按钮。地址是页面给的，必须和当前页面提取到的视频源
+        // 对得上才执行——注入的 JS 接口对页面里所有脚本（含跨域 iframe）都可见。
+        pool.onMediaAction = { action, url, _ ->
+            pool.evaluateVideos(active.id) { sources ->
+                val match = sources.firstOrNull { it.url == url }
+                when {
+                    match == null -> vm.showMessage("这个视频地址已经失效，刷新页面再试")
+                    action == MediaAction.DOWNLOAD -> {
+                        if (enqueueVideo(context, downloads, match, active.url)) {
+                            vm.showMessage("已开始下载")
+                            downloadItems = downloads.query()
+                        } else {
+                            vm.showMessage(
+                                if (match.isStream) "blob/MSE 流式视频下载不了" else "无法开始下载",
+                            )
+                        }
+                    }
+                    action == MediaAction.CAST -> {
+                        if (!cast.playOnDevice(match.url, match.type)) {
+                            vm.showMessage("没有能投屏播放该视频的应用")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     val voiceLauncher = rememberLauncherForActivityResult(
@@ -396,11 +441,14 @@ fun BrowserScreen(
                         onClick = {
                             vm.closeMenu()
                             pool.evaluateVideos(active.id) { sources ->
+                                // blob:/data:（MSE 流式）根本交给不了 DownloadManager，
+                                // 一个源就直接下之前必须先把它排除掉，否则点一下就是闪退。
+                                val files = sources.filterNot { it.isStream }
                                 when {
                                     sources.isEmpty() -> vm.showMessage("本页没有找到可下载的视频")
-                                    // 只有一个源就直接下，不必再让用户选一次。
-                                    sources.size == 1 -> {
-                                        if (!enqueueVideo(context, downloads, sources.first(), active.url)) {
+                                    files.isEmpty() -> vm.showMessage("本页视频是 blob/MSE 流式地址，浏览器取不到文件")
+                                    files.size == 1 -> {
+                                        if (!enqueueVideo(context, downloads, files.first(), active.url)) {
                                             vm.showMessage("无法开始下载")
                                         }
                                         downloadItems = downloads.query()
@@ -517,6 +565,8 @@ private fun enqueueVideo(
     source: VideoSource,
     referer: String?,
 ): Boolean {
+    // 双保险：调用方已经滤过流式地址，这里再挡一次，免得以后新增入口时漏掉。
+    if (source.isStream || !downloads.canDownload(source.url)) return false
     val request = DownloadRequest(
         url = source.url,
         userAgent = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull(),

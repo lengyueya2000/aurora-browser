@@ -66,12 +66,9 @@ class InMemoryBrowserStore(
     override fun recordVisit(title: String, url: String) {
         if (url.isBlank()) return
         val entry = HistoryEntry(title.ifBlank { url }, url, now())
-        // 同一次导航会触发两次（navigate 时一次，onPageFinished/onReceivedTitle 时又一次，
-        // 刷新也会再触发）：地址与上一条相同时替换它，顺便把占位标题换成真实标题，
-        // 而不是在历史里堆两条一样的记录。
-        val head = _history.value.firstOrNull()
-        _history.value = if (head?.url == url) listOf(entry) + _history.value.drop(1)
-        else (listOf(entry) + _history.value).take(BrowserStore.MAX_HISTORY)
+        // 同一地址只留最新的一条并移到最前（与 PrefsBrowserStore 保持一致）。
+        val rest = _history.value.filterNot { it.url == url }
+        _history.value = (listOf(entry) + rest).take(BrowserStore.MAX_HISTORY)
     }
 
     override fun clearHistory() { _history.value = emptyList() }

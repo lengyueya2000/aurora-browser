@@ -1,6 +1,7 @@
 package dev.aurora.browser.ui.browser
 
 import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.os.Build
 import android.view.View
@@ -55,10 +56,15 @@ class VideoFullscreenController(private val host: FullscreenHost) {
         // 已在全屏时又收到一次 show：先把旧的收干净再挂新的，否则旧 View 会永久
         // 留在窗口上（站点切换清晰度/切集时常见），既漏内存又盖住新画面。
         if (_isFullscreen.value) hideInternal(notifyWebView = true)
+        // 挂载失败（窗口状态异常、View 已被别处收走）就当作这次全屏没发生：
+        // 既不留下一个吃掉返回键的假全屏状态，也不让 WebView 卡在「等回调」里。
+        if (runCatching { host.attach(view) }.isFailure) {
+            runCatching { onHidden.onCustomViewHidden() }
+            return
+        }
         current = view
         callback = onHidden
-        host.attach(view)
-        host.setImmersive(true)
+        runCatching { host.setImmersive(true) }
         _isFullscreen.value = true
     }
 
@@ -98,18 +104,35 @@ class ActivityFullscreenHost(private val activity: Activity) : FullscreenHost {
     /** 进入全屏前的刘海策略，退出时原样恢复。 */
     private var savedCutoutMode: Int? = null
 
+    /** 进入全屏前的屏幕方向，退出时原样恢复。 */
+    private var savedOrientation: Int? = null
+
     override fun attach(view: View) {
-        val root = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
+        // `android.R.id.content` 是窗口里所有内容的根，正常一定能找到；找不到就退到
+        // decorView，宁可铺得不够满，也不要让全屏静默失败。
+        val root = activity.findViewById<ViewGroup>(android.R.id.content)
+            ?: (activity.window?.decorView as? ViewGroup)
+            ?: return
         // 自定义 View 可能是从 WebView 内部搬过来的，先摘离原父节点，否则 addView 抛异常。
         (view.parent as? ViewGroup)?.removeView(view)
         view.setBackgroundColor(Color.BLACK)
-        root.addView(
-            view,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
+        runCatching {
+            root.addView(
+                view,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            view.bringToFront()
+            view.requestFocus()
+        }
+        // 横屏视频在竖屏里全屏只能占中间一条，上下两条黑边白扔一半屏幕。系统浏览器
+        // 全屏播放时都会把界面掰到横屏，这里照做；退出全屏时恢复原来的方向。
+        // 布局参数不恢复也无妨——`configChanges` 里已经声明了 orientation，旋转不会
+        // 重建 Activity，挂上去的全屏 View 因此不会被销毁。
+        savedOrientation = activity.requestedOrientation
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         // 横屏全屏视频要能铺到刘海区，否则左右会被切掉一条黑边。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             activity.window?.let { window ->
@@ -123,18 +146,44 @@ class ActivityFullscreenHost(private val activity: Activity) : FullscreenHost {
     }
 
     override fun detach(view: View) {
-        (view.parent as? ViewGroup)?.removeView(view)
+        runCatching { (view.parent as? ViewGroup)?.removeView(view) }
+        savedOrientation?.let { saved ->
+            runCatching { activity.requestedOrientation = saved }
+            savedOrientation = null
+        }
     }
 
+    /**
+     * 隐藏 / 恢复系统栏。
+     *
+     * 现代 API 是 insets controller，但同时把旧的 `systemUiVisibility` 标志位也点上：
+     * 国内几家 ROM（vivo / OPPO / 小米）对 controller 的响应并不一致，只走一条路时
+     * 真机上会出现「视频铺满了，状态栏还挂在那儿」。
+     */
     override fun setImmersive(on: Boolean) {
         val window = activity.window ?: return
         val controller = WindowCompat.getInsetsController(window, window.decorView)
+        val decor = window.decorView
         if (on) {
             controller.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
+            @Suppress("DEPRECATION")
+            run {
+                decor.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            }
+            // 看视频时不该被息屏打断。
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             controller.show(WindowInsetsCompat.Type.systemBars())
+            @Suppress("DEPRECATION")
+            run { decor.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE }
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             savedCutoutMode?.let { mode ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     window.let { w ->
