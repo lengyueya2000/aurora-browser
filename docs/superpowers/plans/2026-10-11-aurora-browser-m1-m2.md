@@ -2472,6 +2472,17 @@ class BrowserViewModelTest {
         assertThat(vm.onBack(canGoBack = false)).isEqualTo(BackOutcome.CLOSE_PANEL)
         assertThat(vm.surface.value).isEqualTo(BrowserSurface.Page)
     }
+
+    @Test fun closingActiveTabKeepsActiveTabValid() {
+        val vm = vm()
+        val a = vm.activeTab.value.id
+        val b = vm.newTab("https://b.com").id
+        vm.selectTab(a)
+        vm.closeTab(a)                                   // 关掉当前标签
+        assertThat(vm.tabsState.value.map { it.id }).containsExactly(b)
+        // activeTab 必须跟着落到剩下的标签，而不是停在已关闭的 a
+        assertThat(vm.activeTab.value.id).isEqualTo(b)
+    }
 }
 ```
 
@@ -2545,8 +2556,14 @@ class BrowserViewModel(
     val exitHintVisible: StateFlow<Boolean> = _exitHintVisible.asStateFlow()
 
     val tabsState: StateFlow<List<BrowserTab>> = tabs.tabs
+    // 不能写 first { }：TabRepository.close 先写 _tabs 再写 _activeId，两个 StateFlow
+    // 之间有一瞬 activeId 仍指向已从 tabs 移除的项（关闭最后一个标签时新旧 id 更是全变）。
+    // 此时 first { } 抛 NoSuchElementException，异常在 stateIn 协程内被静默吞掉，
+    // combine 协程随之终止、activeTab 永久停在旧值——实测关闭当前标签后 activeTab
+    // 仍指向那个已关闭的标签（生产环境该未捕获异常会直接崩应用）。
+    // firstOrNull 兜底到首个标签，下一拍 activeId 更新即被纠正。
     val activeTab: StateFlow<BrowserTab> = combine(tabs.tabs, tabs.activeId) { list, id ->
-        list.first { it.id == id }
+        list.firstOrNull { it.id == id } ?: list.first()
     }.stateIn(viewModelScope, SharingStarted.Eagerly, tabs.active)
 
     fun openOmnibox() { _surface.value = BrowserSurface.Omnibox }
@@ -2607,7 +2624,7 @@ class BrowserViewModel(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.browser.BrowserViewModelTest"`
-Expected: BUILD SUCCESSFUL，8 tests passed
+Expected: BUILD SUCCESSFUL，9 tests passed
 
 - [ ] **Step 5: 提交**
 
@@ -3829,10 +3846,10 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 6: 跑全部测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL，全部任务累计 74 tests passed
+Expected: BUILD SUCCESSFUL，全部任务累计 75 tests passed
 
 > 本任务新增的 `OmniboxScreenTest`（4 例）、`HomeScreenTest`（4 例）、`BrowserScreenTest`（5 例）
-> 共 13 例；加上前 11 个任务的 61 例，合计 74 例。
+> 共 13 例；加上前 11 个任务的 62 例，合计 75 例。
 
 - [ ] **Step 7: 手动冒烟验证**
 
