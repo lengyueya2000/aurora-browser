@@ -1,12 +1,20 @@
 package dev.aurora.browser.ui.browser
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.height
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.domain.model.BrowserTab
@@ -93,5 +101,24 @@ class TabSwitcherScreenTest {
         val h = compose.onAllNodesWithContentDescription("关闭标签页")[0]
             .getUnclippedBoundsInRoot().height
         assertThat(h.value).isAtLeast(48f)
+    }
+
+    // 回归：Page/WebView 常驻在覆盖层下方，覆盖层必须吞掉空白区域的点击，否则会穿透到 WebView。
+    // 空标签列表的中间视口是空白区域，点它不应触发下层的可点内容。
+    @Test fun blankAreaTapDoesNotPassThroughToContentBeneath() {
+        var underClicks = 0
+        compose.setContent {
+            AuroraTheme {
+                Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().clickable { underClicks++ })
+                    TabSwitcherScreen(
+                        tabs = emptyList(), activeId = "",
+                        onSelect = {}, onClose = {}, onNewTab = {}, onCloseAll = {}, onDone = {},
+                    )
+                }
+            }
+        }
+        compose.onRoot().performTouchInput { click(Offset(center.x, height * 0.5f)) }
+        assertThat(underClicks).isEqualTo(0)
     }
 }

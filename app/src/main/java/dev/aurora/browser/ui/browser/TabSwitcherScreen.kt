@@ -3,6 +3,7 @@ package dev.aurora.browser.ui.browser
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -17,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -46,7 +48,16 @@ fun TabSwitcherScreen(
     val c = Aurora.colors
     var layout by remember { mutableStateOf(initialLayout) }
 
-    Column(modifier = modifier.fillMaxSize().background(c.bg)) {
+    // Page/WebView 现在常驻在下方，本覆盖层必须吞掉空白区域的点击（如空标签列表的空白视口），
+    // 否则会穿透到 WebView。不透明 background 只是绘制，不是命中测试边界——只有消费型指针
+    // 修饰符才能挡住事件。用 detectTapGestures（而非 clickable）：只消费事件、不加 Button
+    // 语义角色，且要求 down 未被消费，因此标签卡片/按钮仍能拿到自己的点击。同 AuroraBottomSheet 的做法。
+    Column(
+        modifier = modifier
+            .pointerInput(Unit) { detectTapGestures { } }
+            .fillMaxSize()
+            .background(c.bg),
+    ) {
         // 顶栏：计数 + 视图切换 + 新建 + 关闭全部
         Row(
             modifier = Modifier.fillMaxWidth().padding(AuroraSpacing.l),

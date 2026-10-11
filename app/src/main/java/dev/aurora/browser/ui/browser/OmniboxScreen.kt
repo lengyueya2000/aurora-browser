@@ -3,6 +3,7 @@ package dev.aurora.browser.ui.browser
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -40,7 +42,17 @@ fun OmniboxScreen(
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
-    Column(modifier = modifier.fillMaxSize().background(c.bg).padding(AuroraSpacing.m)) {
+    // Page/WebView 现在常驻在下方，本覆盖层必须吞掉空白区域的点击，否则会穿透到 WebView。
+    // 不透明 background 只是绘制，不是命中测试边界——只有消费型指针修饰符才能挡住事件。
+    // 用 detectTapGestures（而非 clickable）：它只消费事件、不添加 Button 语义角色，且要求
+    // down 未被消费，因此覆盖层自身的控件（输入框、建议行）仍能拿到点击。同 AuroraBottomSheet 的做法。
+    Column(
+        modifier = modifier
+            .pointerInput(Unit) { detectTapGestures { } }
+            .fillMaxSize()
+            .background(c.bg)
+            .padding(AuroraSpacing.m),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
