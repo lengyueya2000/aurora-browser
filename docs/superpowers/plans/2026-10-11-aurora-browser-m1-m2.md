@@ -2664,6 +2664,7 @@ git commit -m "feat(browser): add BrowserSurface state machine and BrowserViewMo
 ```kotlin
 package dev.aurora.browser.ui.browser
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
