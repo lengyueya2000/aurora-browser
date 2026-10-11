@@ -711,6 +711,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
+// DpRect 的 width/height 是扩展属性，不是成员——缺这两个 import 测试编译不过。
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.ui.theme.AuroraTheme
 import org.junit.Rule
