@@ -49,11 +49,13 @@ fun AuroraBottomSheet(
                 // 吞掉面板内的点击：遮罩是全屏可点的，面板若不吃事件，点在把手或留白上
                 // 会穿透到遮罩，把面板误关掉。detectTapGestures 只消费事件、不产生语义，
                 // 因此不会给面板加上一个多余的「按钮」角色。
-                // 必须放在 .clip 之前：clip 会建立 graphics layer，而位于该 layer 内部的
-                // pointerInput 在 Robolectric 下命不中（面板收不到事件，修复失效）。
                 .pointerInput(Unit) { detectTapGestures { } }
-                .clip(RoundedCornerShape(topStart = AuroraRadius.l, topEnd = AuroraRadius.l))
-                .background(c.bgElevated)
+                // 用 background(color, shape) 而非 .clip(shape).background(color)：后者为面板建立
+                // 一个 graphics layer，而仅圆「上两角」的圆角轮廓在本环境（Robolectric）下会让
+                // 层内子节点的命中测试失效——面板内的 SettingRow 收不到点击（Task 12 的
+                // menuSheetNewTabRowClosesTheSheetAndAddsATab 因此失败）。background 的 shape
+                // 参数不建层，视觉完全一致（面板内容不会溢出圆角），既保留遮罩吸收，又让子节点可点。
+                .background(c.bgElevated, RoundedCornerShape(topStart = AuroraRadius.l, topEnd = AuroraRadius.l))
                 .padding(bottom = AuroraSpacing.xl),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
