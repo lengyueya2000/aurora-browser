@@ -64,6 +64,14 @@ class TabSwitcherScreenTest {
         assertThat(closed).isEqualTo("b")
     }
 
+    // 选中是卡片的主操作，必须验证：点第二张卡片应回传它的 id。
+    @Test fun tappingCardSelectsItsTab() {
+        var selected: String? = null
+        render(onSelect = { selected = it })
+        compose.onNodeWithText("B 站").performClick()
+        assertThat(selected).isEqualTo("b")
+    }
+
     @Test fun tappingNewTabFiresCallback() {
         var n = 0
         render(onNewTab = { n++ })
