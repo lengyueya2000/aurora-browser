@@ -78,4 +78,15 @@ class BrowserViewModelTest {
         assertThat(vm.onBack(canGoBack = false)).isEqualTo(BackOutcome.CLOSE_PANEL)
         assertThat(vm.surface.value).isEqualTo(BrowserSurface.Page)
     }
+
+    @Test fun closingActiveTabKeepsActiveTabValid() {
+        val vm = vm()
+        val a = vm.activeTab.value.id
+        val b = vm.newTab("https://b.com").id
+        vm.selectTab(a)
+        vm.closeTab(a)                                   // 关掉当前标签
+        assertThat(vm.tabsState.value.map { it.id }).containsExactly(b)
+        // activeTab 必须跟着落到剩下的标签，而不是停在已关闭的 a
+        assertThat(vm.activeTab.value.id).isEqualTo(b)
+    }
 }

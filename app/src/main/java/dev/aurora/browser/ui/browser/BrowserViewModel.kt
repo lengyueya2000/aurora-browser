@@ -53,8 +53,14 @@ class BrowserViewModel(
     val exitHintVisible: StateFlow<Boolean> = _exitHintVisible.asStateFlow()
 
     val tabsState: StateFlow<List<BrowserTab>> = tabs.tabs
+    // 不能写 first { }：TabRepository.close 先写 _tabs 再写 _activeId，两个 StateFlow
+    // 之间有一瞬 activeId 仍指向已从 tabs 移除的项（关闭最后一个标签时新旧 id 更是全变）。
+    // 此时 first { } 抛 NoSuchElementException，异常在 stateIn 协程内被静默吞掉，
+    // combine 协程随之终止、activeTab 永久停在旧值——实测关闭当前标签后 activeTab
+    // 仍指向那个已关闭的标签（生产环境该未捕获异常会直接崩应用）。
+    // firstOrNull 兜底到首个标签，下一拍 activeId 更新即被纠正。
     val activeTab: StateFlow<BrowserTab> = combine(tabs.tabs, tabs.activeId) { list, id ->
-        list.first { it.id == id }
+        list.firstOrNull { it.id == id } ?: list.first()
     }.stateIn(viewModelScope, SharingStarted.Eagerly, tabs.active)
 
     fun openOmnibox() { _surface.value = BrowserSurface.Omnibox }
@@ -65,10 +71,11 @@ class BrowserViewModel(
     fun openMenu() { _menuOpen.value = true }
     fun closeMenu() { _menuOpen.value = false }
 
-    fun newTab(url: String? = null) {
-        tabs.newTab(url)
+    fun newTab(url: String? = null): BrowserTab {
+        val tab = tabs.newTab(url)
         _surface.value = BrowserSurface.Page
         _menuOpen.value = false
+        return tab
     }
 
     fun closeTab(id: String) = tabs.close(id)
