@@ -1268,13 +1268,19 @@ git commit -m "feat(components): add OmniboxBar with site identity states"
 ```kotlin
 package dev.aurora.browser.ui.components
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.ui.theme.AuroraTheme
@@ -1357,6 +1363,20 @@ class PanelComponentsTest {
             val h = compose.onNodeWithText(label).getUnclippedBoundsInRoot().height
             assertThat(h.value).isAtLeast(48f)
         }
+    }
+
+    // 遮罩是全屏可点的；面板必须自己吃掉点击，否则点在面板留白上会穿透遮罩、把面板误关掉。
+    @Test fun tappingSheetBodyDoesNotDismiss() {
+        var dismissed = 0
+        compose.setContent {
+            AuroraTheme {
+                AuroraBottomSheet(onDismiss = { dismissed++ }) {
+                    Text("面板内容", modifier = Modifier.height(120.dp))
+                }
+            }
+        }
+        compose.onNodeWithText("面板内容").performTouchInput { click() }
+        assertThat(dismissed).isEqualTo(0)
     }
 }
 ```
@@ -1538,6 +1558,9 @@ fun <T> SegmentedControl(
     modifier: Modifier = Modifier,
 ) {
     val c = Aurora.colors
+    // 各段紧贴（0dp 间距）：分段控件是「单选一组」的单一控件，Material 的 SegmentedButton
+    // 同样紧贴。全局约束「相邻可点目标 ≥8dp」针对的是彼此独立的目标，不适用于成组单选控件
+    // （见 progress.md Ruling 16）。
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(AuroraRadius.full))
@@ -1579,6 +1602,7 @@ package dev.aurora.browser.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1587,6 +1611,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -1623,6 +1648,10 @@ fun AuroraBottomSheet(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = AuroraRadius.l, topEnd = AuroraRadius.l))
                 .background(c.bgElevated)
+                // 吞掉面板内的点击：遮罩是全屏可点的，面板若不吃事件，点在把手或留白上
+                // 会穿透到遮罩，把面板误关掉。detectTapGestures 只消费事件、不产生语义，
+                // 因此不会给面板加上一个多余的「按钮」角色。
+                .pointerInput(Unit) { detectTapGestures { } }
                 .padding(bottom = AuroraSpacing.xl),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -1642,7 +1671,7 @@ fun AuroraBottomSheet(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.components.PanelComponentsTest"`
-Expected: BUILD SUCCESSFUL，6 tests passed
+Expected: BUILD SUCCESSFUL，7 tests passed
 
 - [ ] **Step 5: 提交**
 
@@ -3719,10 +3748,10 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 6: 跑全部测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL，全部任务累计 72 tests passed
+Expected: BUILD SUCCESSFUL，全部任务累计 73 tests passed
 
 > 本任务新增的 `OmniboxScreenTest`（4 例）、`HomeScreenTest`（4 例）、`BrowserScreenTest`（5 例）
-> 共 13 例；加上前 11 个任务的 59 例，合计 72 例。
+> 共 13 例；加上前 11 个任务的 60 例，合计 73 例。
 
 - [ ] **Step 7: 手动冒烟验证**
 
