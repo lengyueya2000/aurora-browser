@@ -6,3 +6,8 @@ local.properties
 .tmp/
 .superpowers/
 .kotlin/
+# 发布签名：私钥与口令绝不入库
+keystore.properties
+.signing/
+*.jks
+*.keystore
