@@ -513,7 +513,7 @@ for (const [name, res] of Object.entries(ICONS)) {
   const xml = `<vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="256" android:viewportHeight="256"
-    android:tint="?attr/colorControlNormal">
+    android:tint="?android:attr/colorControlNormal">
   <path android:fillColor="@android:color/white" android:pathData="${d}"/>
 </vector>
 `;
@@ -523,8 +523,14 @@ for (const [name, res] of Object.entries(ICONS)) {
 console.log(`wrote ${n} drawables to ${OUT}`);
 ```
 
-> `android:tint="?attr/colorControlNormal"` 让矢量图跟随 Compose 的 `Icon` tint 着色；
-> `fillColor="@android:color/white"` 是占位，实际颜色由 tint 决定。这两行都不能省。
+> `android:tint` 必须写 `?android:attr/...`（框架命名空间），不能写 `?attr/colorControlNormal`。
+> 后者是 AppCompat 的应用命名空间属性，本项目没有 AppCompat 依赖、主题是平台主题
+> `android:Theme.Material.NoActionBar`，引用它会导致 drawable 膨胀失败
+> （Robolectric 的 `getDrawable` 会直接抛异常）。`fillColor="@android:color/white"` 是占位，
+> 实际颜色由 tint 决定。
+> 另外：在 Compose 里 `Icon(painterResource(...), tint = ...)` 会自己套 ColorFilter，
+> 所以 `android:tint` 对 Compose 渲染是冗余的——留着是为了这些 drawable 被 Compose 之外的
+> 地方（通知、快捷方式图标）复用时也有合理颜色。
 
 - [ ] **Step 2: 运行脚本生成 drawable**
 
