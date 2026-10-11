@@ -2381,6 +2381,7 @@ git commit -m "feat(browser): wrap WebView behind a testable BrowserController"
       fun openTabSwitcher(); fun closeTabSwitcher()
       fun openMenu(); fun closeMenu()
       fun newTab(url: String? = null); fun closeTab(id: String); fun selectTab(id: String)
+      fun updateActiveTab(url: String? = null, title: String? = null)   // WebView 回调写入当前标签
       fun navigate(url: String)                          // 关掉 omnibox + 落到 Page
       fun onBack(canGoBack: Boolean): BackOutcome        // 由 Activity 调用
   }
