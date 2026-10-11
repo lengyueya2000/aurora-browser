@@ -18,6 +18,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import dev.aurora.browser.BuildConfig
+import dev.aurora.browser.media.MediaSniffer
 import java.io.ByteArrayInputStream
 
 /** WebView 触发的下载请求，交给 UI 层入队（DownloadManager 需要 Context）。 */
@@ -57,17 +58,28 @@ class WebViewPool(
     var onShowFullscreenView: (view: View, callback: WebChromeClient.CustomViewCallback) -> Unit =
         { _, _ -> }
     var onHideFullscreenView: () -> Unit = {}
-    // 页面里注入的「下载 / 投屏」按钮被点（见 MediaOverlay）。回调保证在主线程。
-    var onMediaAction: (action: String, url: String, type: String) -> Unit = { _, _, _ -> }
+    // 页面里注入的「全屏 / 下载 / 投屏」按钮被点（见 MediaOverlay）。回调保证在主线程。
+    // 第三个参数是附加信息，见 [MediaBridge]。
+    var onMediaAction: (action: String, url: String, extra: String) -> Unit = { _, _, _ -> }
     var blockTrackers: () -> Boolean = { false }
 
     private val views = mutableMapOf<String, WebView>()
 
     /** 桥的方法跑在 WebView 的 JS 线程上，回调宿主前先切回主线程。 */
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
-    private val mediaBridge = MediaBridge { action, url, type ->
-        main.post { onMediaAction(action, url, type) }
+    private val mediaBridge = MediaBridge { action, url, extra ->
+        main.post { onMediaAction(action, url, extra) }
     }
+
+    /**
+     * 这个标签页当前该拿去播放的地址（真实流，不是页面里的 `blob:`）。
+     *
+     * 页面给不出可用地址时（MSE 站点的 `blob:`）就靠它兜底，见 [MediaSniffer]。
+     */
+    fun sniffedPlayableUrl(tabId: String): String? = MediaSniffer.playable(tabId)
+
+    /** 这个标签页嗅探到的直链媒体文件；没有直链（只有 HLS 分片）时为 null。 */
+    fun sniffedDirectFile(tabId: String): String? = MediaSniffer.directFile(tabId)
 
     /** 取（或创建）该标签的 WebView。 */
     fun get(tabId: String, incognito: Boolean): WebView =
@@ -79,9 +91,13 @@ class WebViewPool(
         stale.forEach { dispose(it) }
     }
 
-    fun dispose(tabId: String) { views.remove(tabId)?.let(::destroy) }
+    fun dispose(tabId: String) {
+        MediaSniffer.clear(tabId)
+        views.remove(tabId)?.let(::destroy)
+    }
 
     fun disposeAll() {
+        views.keys.forEach { MediaSniffer.clear(it) }
         views.values.forEach(::destroy)
         views.clear()
     }
@@ -200,6 +216,9 @@ class WebViewPool(
 
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                    // 换页就把上一条视频嗅探到的地址清掉：留着的话，新页面上点「下载」
+                    // 会下到上一个视频的流。
+                    MediaSniffer.clear(tabId)
                     onPageStarted(tabId)
                 }
 
@@ -263,7 +282,10 @@ class WebViewPool(
                     view: WebView,
                     request: WebResourceRequest,
                 ): WebResourceResponse? {
-                    // 注意：此回调在后台线程，只做纯计算与线程安全的计数，不碰 Compose 状态。
+                    // 注意：此回调在后台线程，只做纯计算与线程安全的写入，不碰 Compose 状态。
+                    // 每个请求都从这里过，视频站的真实流（HLS 播放列表、直链文件）就藏在这里——
+                    // 页面里的 `<video>` 只有 MSE 的 `blob:`，拿不到地址。见 MediaSniffer。
+                    MediaSniffer.record(tabId, request.url.toString())
                     if (!blockTrackers()) return null
                     if (!dev.aurora.browser.domain.TrackerBlocklist.isBlocked(request.url.toString())) {
                         return null

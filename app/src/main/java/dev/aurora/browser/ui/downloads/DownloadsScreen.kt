@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.aurora.browser.data.DownloadItem
 import dev.aurora.browser.data.DownloadsRepository
+import dev.aurora.browser.media.OfflineItem
 import dev.aurora.browser.ui.components.ScreenHeader
 import dev.aurora.browser.ui.components.SegmentedControl
 import dev.aurora.browser.ui.components.auroraClickable
@@ -40,7 +42,18 @@ import dev.aurora.browser.ui.theme.Aurora
 import dev.aurora.browser.ui.theme.AuroraRadius
 import dev.aurora.browser.ui.theme.AuroraSpacing
 
-/** 下载管理（规格 5.8）：进行中 / 已完成分段 + 行内进度与操作。 */
+/**
+ * 下载管理（规格 5.8）：进行中 / 已完成分段 + 行内进度与操作。
+ *
+ * 这里有两种下载，来源完全不同：
+ * - **文件**（[DownloadItem]）走系统 `DownloadManager`，落在公共「下载」目录里，
+ *   用户能在文件管理器里找到、能分享；
+ * - **离线缓存**（[OfflineItem]）走 Media3，存在应用私有目录里，只能在应用内离线播。
+ *
+ * 之所以分成两条路：直链（`.mp4`/`.flv`）能直接存成一个文件，而 HLS（`.m3u8`）是
+ * 几百个 `.ts` 分片，系统 `DownloadManager` 只会存下那个几 KB 的播放列表文本——
+ * 用户点完「下载」得到一个打不开的文件，比不给按钮更糟。
+ */
 @Composable
 fun DownloadsScreen(
     downloads: List<DownloadItem>,
@@ -49,13 +62,18 @@ fun DownloadsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     initialTab: DownloadTab = DownloadTab.RUNNING,
+    offline: List<OfflineItem> = emptyList(),
+    onOpenOffline: (OfflineItem) -> Unit = {},
+    onRemoveOffline: (OfflineItem) -> Unit = {},
 ) {
     val c = Aurora.colors
     var tab by remember { mutableStateOf(initialTab) }
 
-    val running = downloads.filter { it.isRunning || (!it.isSuccess && !it.isRunning) }
-    val finished = downloads.filter { it.isSuccess }
-    val rows = if (tab == DownloadTab.RUNNING) running else finished
+    val rows = remember(downloads, offline, tab) {
+        val all = downloads.map { it.toRow(onOpen, onRemove) } +
+            offline.map { it.toRow(onOpenOffline, onRemoveOffline) }
+        if (tab == DownloadTab.RUNNING) all.filterNot { it.completed } else all.filter { it.completed }
+    }
 
     Column(modifier = modifier.fillMaxSize().background(c.bg)) {
         ScreenHeader(title = "下载管理", onBack = onBack)
@@ -83,9 +101,7 @@ fun DownloadsScreen(
                 contentPadding = PaddingValues(vertical = AuroraSpacing.s, horizontal = AuroraSpacing.l),
                 verticalArrangement = Arrangement.spacedBy(AuroraSpacing.s),
             ) {
-                items(rows, key = { it.id }) { item ->
-                    DownloadRowItem(item, onOpen = { onOpen(item.id) }, onRemove = { onRemove(item.id) })
-                }
+                items(rows, key = { it.key }) { row -> DownloadRowItem(row) }
             }
         }
     }
@@ -93,10 +109,46 @@ fun DownloadsScreen(
 
 enum class DownloadTab { RUNNING, DONE }
 
+/** 两种下载归一成一种行，列表才不用为来源分叉。 */
+private data class DownloadRow(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val progress: Float?,
+    val failed: Boolean,
+    val completed: Boolean,
+    val onOpen: (() -> Unit)?,
+    val onRemove: () -> Unit,
+)
+
+private fun DownloadItem.toRow(onOpen: (Long) -> Unit, onRemove: (Long) -> Unit) = DownloadRow(
+    key = "file-$id",
+    title = title.ifBlank { "下载文件" },
+    subtitle = statusLine(this),
+    progress = if (isRunning && totalBytes > 0) progress else null,
+    failed = !isRunning && !isSuccess,
+    completed = isSuccess,
+    onOpen = if (isSuccess) ({ onOpen(id) }) else null,
+    onRemove = { onRemove(id) },
+)
+
+private fun OfflineItem.toRow(
+    onOpen: (OfflineItem) -> Unit,
+    onRemove: (OfflineItem) -> Unit,
+) = DownloadRow(
+    key = "offline-$url",
+    title = title,
+    subtitle = offlineStatusLine(this),
+    progress = if (isRunning) progress else null,
+    failed = isFailed,
+    completed = isCompleted,
+    onOpen = if (isCompleted) ({ onOpen(this) }) else null,
+    onRemove = { onRemove(this) },
+)
+
 @Composable
-private fun DownloadRowItem(item: DownloadItem, onOpen: () -> Unit, onRemove: () -> Unit) {
+private fun DownloadRowItem(row: DownloadRow) {
     val c = Aurora.colors
-    val failed = !item.isRunning && !item.isSuccess
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -110,20 +162,20 @@ private fun DownloadRowItem(item: DownloadItem, onOpen: () -> Unit, onRemove: ()
         Icon(
             painter = painterResource(AuroraIcons.Download),
             contentDescription = null,
-            tint = if (failed) c.danger else c.brand,
+            tint = if (row.failed) c.danger else c.brand,
             modifier = Modifier.size(22.dp),
         )
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(AuroraSpacing.xs),
         ) {
-            Text(item.title, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(row.title, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                text = statusLine(item),
-                color = if (failed) c.danger else c.textMuted,
-                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                text = row.subtitle,
+                color = if (row.failed) c.danger else c.textMuted,
+                style = MaterialTheme.typography.labelSmall,
             )
-            if (item.isRunning && item.totalBytes > 0) {
+            row.progress?.let { value ->
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -133,18 +185,18 @@ private fun DownloadRowItem(item: DownloadItem, onOpen: () -> Unit, onRemove: ()
                 ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth(item.progress)
+                            .fillMaxWidth(value)
                             .height(3.dp)
                             .background(c.brand),
                     )
                 }
             }
         }
-        if (item.isSuccess) {
+        row.onOpen?.let { open ->
             Box(
                 modifier = Modifier
                     .size(AuroraSpacing.touchTarget)
-                    .auroraClickable(onClick = onOpen)
+                    .auroraClickable(onClick = open)
                     .semantics { contentDescription = "打开下载文件" },
                 contentAlignment = Alignment.Center,
             ) {
@@ -159,7 +211,7 @@ private fun DownloadRowItem(item: DownloadItem, onOpen: () -> Unit, onRemove: ()
         Box(
             modifier = Modifier
                 .size(AuroraSpacing.touchTarget)
-                .auroraClickable(onClick = onRemove)
+                .auroraClickable(onClick = row.onRemove)
                 .semantics { contentDescription = "删除下载" },
             contentAlignment = Alignment.Center,
         ) {
@@ -179,4 +231,11 @@ private fun statusLine(item: DownloadItem): String = when {
         "${DownloadsRepository.formatSize(item.bytesDownloaded)} / ${DownloadsRepository.formatSize(item.totalBytes)}"
     item.isRunning -> "下载中…"
     else -> "下载失败"
+}
+
+private fun offlineStatusLine(item: OfflineItem): String = when {
+    item.isCompleted -> "离线缓存 · ${DownloadsRepository.formatSize(item.bytes)}"
+    item.isFailed -> "离线缓存失败"
+    item.bytes > 0 -> "离线缓存中 · ${DownloadsRepository.formatSize(item.bytes)}"
+    else -> "离线缓存中…"
 }

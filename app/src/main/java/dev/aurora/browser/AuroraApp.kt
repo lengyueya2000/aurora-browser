@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import dev.aurora.browser.data.BrowserStore
 import dev.aurora.browser.data.PrefsBrowserStore
 import dev.aurora.browser.domain.TabRepository
+import dev.aurora.browser.media.AuroraDownloadService
 import dev.aurora.browser.ui.browser.BrowserViewModel
 
 /**
@@ -29,6 +30,28 @@ class AuroraApp : Application() {
         super.onCreate()
         // 尽早装上：真机上复现不了的闪退，下次启动时能把堆栈原样交出来。
         CrashLog.install(this)
+        createOfflineChannel()
+    }
+
+    /**
+     * 离线缓存的前台服务通知渠道。
+     *
+     * 渠道 id 必须和 [dev.aurora.browser.media.AuroraDownloadService.CHANNEL_ID] 一致；
+     * 渠道要在发通知之前建好，否则 Android 8+ 会直接把通知丢掉，下载进度就看不见了。
+     */
+    private fun createOfflineChannel() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
+        runCatching {
+            val manager = getSystemService(android.app.NotificationManager::class.java) ?: return
+            if (manager.getNotificationChannel(AuroraDownloadService.CHANNEL_ID) != null) return
+            manager.createNotificationChannel(
+                android.app.NotificationChannel(
+                    AuroraDownloadService.CHANNEL_ID,
+                    getString(R.string.offline_channel_name),
+                    android.app.NotificationManager.IMPORTANCE_LOW,
+                ).apply { description = getString(R.string.offline_channel_description) },
+            )
+        }
     }
 }
 

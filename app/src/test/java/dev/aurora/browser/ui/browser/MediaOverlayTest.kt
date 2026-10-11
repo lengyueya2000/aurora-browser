@@ -16,7 +16,6 @@ class MediaOverlayTest {
 
     @Test fun scriptHangsButtonsOffEveryVideoElement() {
         assertThat(script).contains("querySelectorAll('video')")
-        assertThat(script).contains("requestFullscreen")
         assertThat(script).contains("全屏")
         assertThat(script).contains("下载")
         assertThat(script).contains("投屏")
@@ -24,8 +23,21 @@ class MediaOverlayTest {
 
     @Test fun scriptTalksBackThroughTheBridge() {
         assertThat(script).contains("window.${MediaOverlay.BRIDGE_NAME}.onMediaAction")
+        assertThat(script).contains("'play'")
         assertThat(script).contains("'download'")
         assertThat(script).contains("'cast'")
+    }
+
+    /**
+     * 「全屏」不再自己调 `requestFullscreen()`。
+     *
+     * 站点普遍用 MSE，`<video>` 只是 `blob:` 壳子，WebView 把它交出来的自定义 View 挂上
+     * 窗口之后画面是黑的（用户实测的「全屏之后是黑屏」）。现在一律回宿主，由内置的
+     * Media3 播放器全屏播真实流。
+     */
+    @Test fun fullscreenButtonHandsOffToTheHostInsteadOfRequestFullscreen() {
+        assertThat(script).doesNotContain("requestFullscreen")
+        assertThat(script).contains("notify('play'")
     }
 
     /** 单页应用的播放器是后建的，没有统一事件可听，必须靠定时兜底。 */
@@ -40,9 +52,16 @@ class MediaOverlayTest {
         assertThat(script).contains("window.__auroraMediaOverlay = api")
     }
 
-    /** blob/MSE 源既下不了也投不出去，不该给出按钮骗用户点。 */
-    @Test fun scriptHidesDownloadAndCastForStreamSources() {
-        assertThat(script).contains("STREAM.test(sourceOf(v))")
+    /**
+     * 下载 / 投屏按钮必须常驻，不能因为源是 `blob:` 就不给。
+     *
+     * 以前正是这么做的，结果欧乐影院这类 MSE 站点（视频站里的大多数）上用户只看到
+     * 一个「全屏」，反馈就是「没有下载按钮」。真实流地址由宿主从网络层嗅探。
+     */
+    @Test fun downloadAndCastButtonsAreAlwaysPresent() {
+        assertThat(script).contains("button('下载'")
+        assertThat(script).contains("button('投屏'")
+        assertThat(script).doesNotContain("STREAM.test")
     }
 
     /**
@@ -67,21 +86,34 @@ class MediaOverlayTest {
         assertThat(script).doesNotContain("style=\"")
     }
 
-    @Test fun onlyDownloadAndCastAreAccepted() {
-        assertThat(MediaAction.isValid("download", "https://a.com/v.mp4")).isTrue()
-        assertThat(MediaAction.isValid("cast", "http://a.com/v.mp4")).isTrue()
+    /** 切到内置播放器时要带上当前进度，否则用户按个全屏就回到第 0 秒。 */
+    @Test fun playCarriesTheCurrentPlaybackPosition() {
+        assertThat(script).contains("v.currentTime")
+        assertThat(script).contains("v.pause()")
+    }
+
+    @Test fun onlyTheThreeKnownActionsAreAccepted() {
+        assertThat(MediaAction.isValid(MediaAction.PLAY, "https://a.com/v.mp4")).isTrue()
+        assertThat(MediaAction.isValid(MediaAction.DOWNLOAD, "https://a.com/v.mp4")).isTrue()
+        assertThat(MediaAction.isValid(MediaAction.CAST, "http://a.com/v.mp4")).isTrue()
         assertThat(MediaAction.isValid("fullscreen", "https://a.com/v.mp4")).isFalse()
         assertThat(MediaAction.isValid("", "https://a.com/v.mp4")).isFalse()
         assertThat(MediaAction.isValid("DOWNLOAD", "https://a.com/v.mp4")).isFalse()
     }
 
-    /** 地址必须是 http/https：blob:/data:/javascript:/file: 一律挡掉。 */
-    @Test fun onlyHttpUrlsAreAccepted() {
-        assertThat(MediaAction.isValid("download", "blob:https://a.com/x")).isFalse()
-        assertThat(MediaAction.isValid("download", "data:video/mp4;base64,AAAA")).isFalse()
+    /**
+     * 地址必须是 http/https/blob/data，其余 scheme 一律挡掉。
+     *
+     * `blob:` 放行是必需的：MSE 站点的 `<video>` 上就只有它，宿主拿它去和当前页面提取到的
+     * 视频源比对，对上了才继续。`javascript:` / `file:` 这类才是真正要挡的。
+     */
+    @Test fun urlSchemeIsAllowlisted() {
+        assertThat(MediaAction.isValid("download", "blob:https://a.com/x")).isTrue()
+        assertThat(MediaAction.isValid("play", "data:video/mp4;base64,AAAA")).isTrue()
         assertThat(MediaAction.isValid("download", "javascript:alert(1)")).isFalse()
         assertThat(MediaAction.isValid("download", "file:///etc/passwd")).isFalse()
-        assertThat(MediaAction.isValid("download", "")).isFalse()
+        assertThat(MediaAction.isValid("download", "content://media/1")).isFalse()
+        assertThat(MediaAction.isValid("download", "intent://x")).isFalse()
     }
 
     /** 桥自己也要挡一道，不能只靠调用方守规矩。 */
@@ -90,7 +122,15 @@ class MediaOverlayTest {
         val bridge = MediaBridge { action, url, _ -> seen += "$action $url" }
         bridge.onMediaAction("download", "https://a.com/v.mp4", "")
         bridge.onMediaAction("evil", "https://a.com/v.mp4", "")
-        bridge.onMediaAction("download", "blob:https://a.com/x", "")
+        bridge.onMediaAction("download", "javascript:alert(1)", "")
         assertThat(seen).containsExactly("download https://a.com/v.mp4")
+    }
+
+    /** 第三个参数（play 的当前秒数）要原样带给宿主。 */
+    @Test fun bridgeForwardsTheExtraField() {
+        var extra: String? = null
+        val bridge = MediaBridge { _, _, e -> extra = e }
+        bridge.onMediaAction("play", "blob:https://a.com/x", "123")
+        assertThat(extra).isEqualTo("123")
     }
 }

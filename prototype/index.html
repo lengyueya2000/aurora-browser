@@ -1196,7 +1196,7 @@ LazyColumn(<br>
         </div>
         <div class="stg-h">关于</div>
         <div class="stg-group">
-          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.4.0</span></div>
+          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.5.0</span></div>
           <div class="lrow"><span class="ic" data-i="link-simple" data-s="20"></span><span class="lb">开源许可</span><span class="go" data-i="caret-right" data-s="16"></span></div>
         </div>
       </div>
@@ -1222,7 +1222,7 @@ LazyColumn(<br>
 </style>
 <div class="frame-wrap">
   <div class="frame-cap"><span class="n">13</span><span class="t">视频浮层 · 全屏 / 下载 / 投屏</span>
-    <span class="d">按钮贴在视频右上角；blob/MSE 流式源不给下载与投屏</span></div>
+    <span class="d">三个按钮总是都在；全屏交给内置播放器，HLS 走离线缓存</span></div>
   <div class="phone">
     <div class="statusbar"><span>9:41</span>
       <span class="sb-right">
@@ -1247,13 +1247,15 @@ LazyColumn(<br>
               <span class="vf-pill">全屏</span><span class="vf-pill">下载</span><span class="vf-pill">投屏</span>
             </div>
           </div>
-          <div class="vf-note">普通视频（<code>http(s)://…mp4</code>）：三个按钮都给。点「下载」直接交给系统 DownloadManager，点「投屏」把地址交给能播 video 的应用。</div>
+          <div class="vf-note">直链视频（<code>http(s)://…mp4</code>）：点「下载」交给系统 DownloadManager，点「投屏」把地址交给能播 video 的应用，点「全屏」进内置播放器并接着当前进度播。</div>
 
           <div class="vf-box">
             <div class="vf-stage"><span class="vf-play"></span></div>
-            <div class="vf-pills"><span class="vf-pill">全屏</span></div>
+            <div class="vf-pills">
+              <span class="vf-pill">全屏</span><span class="vf-pill">下载</span><span class="vf-pill">投屏</span>
+            </div>
           </div>
-          <div class="vf-note" style="margin-bottom:0">流式视频（<code>blob:</code> / MSE，B 站这类都是）：只留「全屏」。下载与投屏按钮不出现——浏览器拿不到那个地址，点了也只能报错，不如不给。</div>
+          <div class="vf-note" style="margin-bottom:0">流式视频（<code>blob:</code> / MSE，欧乐影院这类都是）：按钮照给，但地址不在页面里——浏览器从网络层嗅探真实流（<code>master.m3u8</code>），「下载」走离线缓存，「全屏」交给内置播放器。嗅探不到时给一句提示，而不是让按钮消失。</div>
         </div>
       </div>
       <div class="toolbar-wrap">

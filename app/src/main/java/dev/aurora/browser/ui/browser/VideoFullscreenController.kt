@@ -3,17 +3,13 @@ package dev.aurora.browser.ui.browser
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.Color
-import android.os.Build
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.webkit.WebChromeClient
 import android.widget.FrameLayout
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
+import dev.aurora.browser.media.ImmersiveMode
 
 /**
  * 网页视频全屏的宿主：把 `WebChromeClient` 交出来的自定义 View 贴到窗口最上层，
@@ -133,16 +129,9 @@ class ActivityFullscreenHost(private val activity: Activity) : FullscreenHost {
         // 重建 Activity，挂上去的全屏 View 因此不会被销毁。
         savedOrientation = activity.requestedOrientation
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        // 横屏全屏视频要能铺到刘海区，否则左右会被切掉一条黑边。
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            activity.window?.let { window ->
-                val attrs = window.attributes
-                savedCutoutMode = attrs.layoutInDisplayCutoutMode
-                attrs.layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                window.attributes = attrs
-            }
-        }
+        // 刘海策略（铺到刘海区）跟着 [ImmersiveMode.enter] 一起设，不再重复一遍：
+        // 这里先设、`setImmersive(true)` 再设，会把「改前值」覆盖成已改过的值，
+        // 退出时就恢复不回去了。
     }
 
     override fun detach(view: View) {
@@ -156,43 +145,14 @@ class ActivityFullscreenHost(private val activity: Activity) : FullscreenHost {
     /**
      * 隐藏 / 恢复系统栏。
      *
-     * 现代 API 是 insets controller，但同时把旧的 `systemUiVisibility` 标志位也点上：
-     * 国内几家 ROM（vivo / OPPO / 小米）对 controller 的响应并不一致，只走一条路时
-     * 真机上会出现「视频铺满了，状态栏还挂在那儿」。
+     * 具体做法（含国内 ROM 的双路兼容、刘海策略、常亮）在 [ImmersiveMode] 里，
+     * 原生播放器 [dev.aurora.browser.media.PlayerActivity] 走的是同一份代码。
      */
     override fun setImmersive(on: Boolean) {
-        val window = activity.window ?: return
-        val controller = WindowCompat.getInsetsController(window, window.decorView)
-        val decor = window.decorView
         if (on) {
-            controller.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-            @Suppress("DEPRECATION")
-            run {
-                decor.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
-                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-            }
-            // 看视频时不该被息屏打断。
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            savedCutoutMode = ImmersiveMode.enter(activity, savedCutoutMode)
         } else {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-            @Suppress("DEPRECATION")
-            run { decor.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE }
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            savedCutoutMode?.let { mode ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    window.let { w ->
-                        val attrs = w.attributes
-                        attrs.layoutInDisplayCutoutMode = mode
-                        w.attributes = attrs
-                    }
-                }
-            }
+            ImmersiveMode.exit(activity, savedCutoutMode)
             savedCutoutMode = null
         }
     }

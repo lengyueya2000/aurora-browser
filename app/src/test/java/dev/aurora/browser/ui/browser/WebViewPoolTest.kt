@@ -171,6 +171,43 @@ class WebViewPoolTest {
         assertThat(blocked).isEqualTo(1)
     }
 
+    /**
+     * MSE 站点的真实流只出现在网络层：页面里的 `<video>` 是 `blob:` 伪地址
+     * （欧乐影院就是 plyr + hls.js）。所以每个请求都要喂给嗅探器，全屏/下载/投屏才有地址可用。
+     */
+    @Test fun mediaRequestsAreSniffedPerTab() {
+        val pool = newPool(CountingFactory())
+        val web = pool.get("sniff", false)
+        val client = shadowOf(web).webViewClient
+
+        client.shouldInterceptRequest(web, FakeRequest("https://c.com/v/master.m3u8"))
+        client.shouldInterceptRequest(web, FakeRequest("https://c.com/v/seg-1-v1-a1.ts"))
+        assertThat(pool.sniffedPlayableUrl("sniff")).isEqualTo("https://c.com/v/master.m3u8")
+
+        // 直链站点没有播放列表，嗅探结果就是那个文件本身。
+        client.shouldInterceptRequest(web, FakeRequest("https://c.com/v/b.mp4"))
+        assertThat(pool.sniffedDirectFile("sniff")).isEqualTo("https://c.com/v/b.mp4")
+
+        // 非媒体请求（JS/CSS/图片）不该污染结果。
+        client.shouldInterceptRequest(web, FakeRequest("https://c.com/app.js"))
+        assertThat(pool.sniffedPlayableUrl("sniff")).isEqualTo("https://c.com/v/master.m3u8")
+
+        pool.dispose("sniff")
+        assertThat(pool.sniffedPlayableUrl("sniff")).isNull()
+    }
+
+    /** 换页要清掉上一条视频的嗅探结果，否则新页面点「下载」会下到上一个视频。 */
+    @Test fun pageStartClearsSniffedMedia() {
+        val pool = newPool(CountingFactory())
+        val web = pool.get("sniff2", false)
+        val client = shadowOf(web).webViewClient
+        client.shouldInterceptRequest(web, FakeRequest("https://c.com/v/master.m3u8"))
+        assertThat(pool.sniffedPlayableUrl("sniff2")).isNotNull()
+
+        client.onPageStarted(web, "https://a.com/next", null)
+        assertThat(pool.sniffedPlayableUrl("sniff2")).isNull()
+    }
+
     @Test fun downloadsAreHandedToTheUiLayer() {
         val f = CountingFactory()
         val pool = newPool(f)

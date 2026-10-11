@@ -9,13 +9,15 @@ import android.webkit.JavascriptInterface
  * 要点两下才能到「下载视频」。真正好用的位置是视频自己身上——所以把三个按钮
  * 贴到每个 `<video>` 的右上角。
  *
- * 三个按钮里只有「全屏」是纯前端动作（直接调 `requestFullscreen()`，由
- * `WebChromeClient.onShowCustomView` 接管），另外两个要回宿主，走
- * `addJavascriptInterface` 注册的 [MediaBridge]。
+ * 三个按钮**都要回宿主**，没有一个是纯前端动作：
+ * - 「全屏」交给内置的 Media3 播放器（[dev.aurora.browser.media.PlayerActivity]）。曾经
+ *   直接调 `video.requestFullscreen()`，但站点普遍用 MSE，`<video>` 只是个 `blob:` 壳子，
+ *   WebView 把它的自定义 View 搬上窗口之后画面就是黑的——用户实测的「全屏之后是黑屏」。
+ * - 「下载」「投屏」需要真实流地址，而页面里只有 `blob:`，得由宿主从网络层嗅探（见
+ *   [dev.aurora.browser.media.MediaSniffer]）。
  *
- * 为什么不用 `onJsPrompt` 那套：`prompt` 是同步阻塞的，而下载/投屏都要先异步
- * 重新提取一遍页面里的视频源做校验，同步接口表达不了。桥只暴露一个方法，
- * 且宿主会校验动作名与地址，见 [MediaAction]。
+ * 因此三个按钮一律走 `addJavascriptInterface` 注册的 [MediaBridge]，由宿主决定地址与
+ * 动作是否成立。
  */
 object MediaOverlay {
 
@@ -34,7 +36,6 @@ object MediaOverlay {
         (function () {
           if (window.__auroraMediaOverlay) { window.__auroraMediaOverlay.sync(); return 'ok'; }
 
-          var STREAM = /^(blob|data):/i;
           var BAR_ATTR = 'data-aurora-media';
           // 按钮必须用另一个标记。回收孤儿按钮时按 BAR_ATTR 查，而按钮没有 __owner，
           // 用同一个属性的话每个按钮都会被当成孤儿当场删掉——浮层就只剩个空壳。
@@ -74,10 +75,12 @@ object MediaOverlay {
             return b;
           }
 
-          function notify(action, v) {
-            var url = sourceOf(v);
-            if (!url) return;
-            try { window.$BRIDGE_NAME.onMediaAction(action, url, ''); } catch (e) {}
+          // 第三个参数是「附加信息」，宿主按动作解释：play 传的是当前播放到第几秒，
+          // 换到内置播放器接着播，而不是从头开始。另外两个用不上，传空串。
+          function notify(action, v, extra) {
+            try {
+              window.$BRIDGE_NAME.onMediaAction(action, sourceOf(v), extra || '');
+            } catch (e) {}
           }
 
           function buildBar(v) {
@@ -87,15 +90,16 @@ object MediaOverlay {
             bar.style.cssText = 'position:fixed;z-index:2147483647;display:flex;gap:6px;' +
               'pointer-events:auto;';
             bar.appendChild(button('全屏', function () {
-              var fn = v.requestFullscreen || v.webkitRequestFullscreen || v.webkitEnterFullscreen;
-              if (fn) { try { fn.call(v); } catch (e) {} }
+              var at = Math.floor(v.currentTime || 0);
+              // 页面里这个还在放，不暂停的话内置播放器一开就是两路声音叠在一起。
+              try { v.pause(); } catch (e) {}
+              notify('play', v, String(at));
             }));
-            // blob:/data:（MSE 流式）既下不了也投不出去，干脆不给按钮，
-            // 免得点了只弹一句「不支持」——那等于骗用户点一次。
-            if (!STREAM.test(sourceOf(v))) {
-              bar.appendChild(button('下载', function () { notify('download', v); }));
-              bar.appendChild(button('投屏', function () { notify('cast', v); }));
-            }
+            // 三个按钮都常驻。以前 blob:/MSE 时不显示下载/投屏，可那正是视频站最常见的
+            // 情形（欧乐影院就是），用户看到的就是「没有下载按钮」。现在交给宿主去网络层
+            // 找真实流，找不到再如实说明，而不是干脆不给按钮。
+            bar.appendChild(button('下载', function () { notify('download', v, ''); }));
+            bar.appendChild(button('投屏', function () { notify('cast', v, ''); }));
             return bar;
           }
 
@@ -148,16 +152,26 @@ object MediaOverlay {
  * 页面上的按钮能触发的动作。
  *
  * 注入的 JS 接口对页面里所有脚本（含跨域 iframe）都是可见的，所以宿主不能照单全收：
- * 动作名必须在这两个里，地址必须是 http/https。宿主拿到之后还会再跟当前页面提取出来的
- * 视频源比对一次，对不上就丢弃——被广告 iframe 乱调也只会被忽略。
+ * 动作名必须在这三个里，地址必须是 http/https/blob/data（页面里的 `<video>` 只有
+ * `blob:`，那是 MSE 的壳子，真实地址由宿主自己从网络层嗅探）。
+ *
+ * 宿主拿到之后还会再跟当前页面提取出来的视频源比对一次，对不上就丢弃——被广告 iframe
+ * 乱调也只会被忽略。空地址是允许的：视频源取不到时仍要让宿主有机会用嗅探结果兜底。
  */
 object MediaAction {
+    /** 用内置播放器全屏播放。 */
+    const val PLAY = "play"
     const val DOWNLOAD = "download"
     const val CAST = "cast"
 
+    private val ALLOWED = setOf(PLAY, DOWNLOAD, CAST)
+
     fun isValid(action: String, url: String): Boolean =
-        (action == DOWNLOAD || action == CAST) &&
-            (url.startsWith("http://") || url.startsWith("https://"))
+        action in ALLOWED && (
+            url.isEmpty() ||
+                url.startsWith("http://") || url.startsWith("https://") ||
+                url.startsWith("blob:") || url.startsWith("data:")
+            )
 }
 
 /**
@@ -165,11 +179,14 @@ object MediaAction {
  *
  * `@JavascriptInterface` 的方法跑在 WebView 的 JS 线程上，**不是**主线程，
  * 所以这里只负责转交，由调用方（[WebViewPool]）切回主线程再碰 UI 和系统服务。
+ *
+ * @param extra 附加信息，按动作解释：`play` 是当前播放到第几秒（换到内置播放器接着播），
+ *   其余动作为空串。
  */
-class MediaBridge(private val onAction: (action: String, url: String, type: String) -> Unit) {
+class MediaBridge(private val onAction: (action: String, url: String, extra: String) -> Unit) {
     @JavascriptInterface
-    fun onMediaAction(action: String, url: String, type: String) {
+    fun onMediaAction(action: String, url: String, extra: String) {
         if (!MediaAction.isValid(action, url)) return
-        onAction(action, url, type.orEmpty())
+        onAction(action, url, extra.orEmpty())
     }
 }

@@ -22,8 +22,8 @@ android {
         applicationId = "dev.aurora.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -82,6 +82,12 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.lifecycle.viewmodel.compose)   // viewModel() 所需
+    // 视频全屏 / 下载 / 投屏都交给 Media3 的 ExoPlayer：原生 Surface 渲染，不再走
+    // WebView 的全屏自定义 View（真机上会黑屏），HLS 播放与离线缓存也由它负责。
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.exoplayer.hls)
+    implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.database)
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)

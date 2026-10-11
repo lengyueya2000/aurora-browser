@@ -57,6 +57,9 @@ import dev.aurora.browser.BuildConfig
 import dev.aurora.browser.data.DownloadItem
 import dev.aurora.browser.data.DownloadsRepository
 import dev.aurora.browser.domain.BackOutcome
+import dev.aurora.browser.media.OfflineItem
+import dev.aurora.browser.media.OfflineMedia
+import dev.aurora.browser.media.PlayerActivity
 import dev.aurora.browser.ui.cast.CastController
 import dev.aurora.browser.ui.components.ActionGridTile
 import dev.aurora.browser.ui.components.AuroraBottomSheet
@@ -149,7 +152,36 @@ fun BrowserScreen(
     var reader by remember { mutableStateOf<Pair<String, String>?>(null) }
     var libraryTab by remember { mutableStateOf(LibraryTab.BOOKMARKS) }
     var downloadItems by remember { mutableStateOf<List<DownloadItem>>(emptyList()) }
+    var offlineItems by remember { mutableStateOf<List<OfflineItem>>(emptyList()) }
     var mediaSheet by remember { mutableStateOf<MediaSheet?>(null) }
+
+    /**
+     * 开始下载一个已经解析好的地址。
+     *
+     * 浮层按钮和主菜单两处都用它：两条路都得先判断是直链还是播放列表，各写一遍迟早漂移。
+     * 返回 true 表示已经入队。
+     */
+    val startDownload: (url: String, title: String) -> Boolean = { url, title ->
+        if (isPlaylistUrl(url)) {
+            // HLS/DASH 是一堆分片：交给 Media3 的离线缓存，下完能离线播。
+            OfflineMedia.enqueue(context, url, title)
+            offlineItems = OfflineMedia.items(context)
+            vm.showMessage("已开始离线缓存，可在「下载管理」里离线观看")
+            true
+        } else {
+            val request = DownloadRequest(
+                url = url,
+                userAgent = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull(),
+                contentDisposition = null,
+                mimeType = null,
+                contentLength = -1L,
+            )
+            val id = downloads.enqueue(request, referer = active.url)
+            vm.showMessage(if (id != null) "已开始下载" else "无法开始下载")
+            downloadItems = downloads.query()
+            id != null
+        }
+    }
 
     // 关掉的标签要连 WebView 一起释放，否则池里会留着看不见的实例（内存 + 后台 JS）。
     LaunchedEffect(tabs.map { it.id }) { pool.retain(tabs.map { it.id }.toSet()) }
@@ -184,27 +216,38 @@ fun BrowserScreen(
         // 视频全屏：WebView 交出要全屏播放的 View，由我们挂到窗口上并切沉浸式。
         pool.onShowFullscreenView = { view, callback -> fullscreen.show(view, callback) }
         pool.onHideFullscreenView = { fullscreen.hide() }
-        // 视频画面上的「下载 / 投屏」按钮。地址是页面给的，必须和当前页面提取到的视频源
-        // 对得上才执行——注入的 JS 接口对页面里所有脚本（含跨域 iframe）都可见。
-        pool.onMediaAction = { action, url, _ ->
-            pool.evaluateVideos(active.id) { sources ->
-                val match = sources.firstOrNull { it.url == url }
-                when {
-                    match == null -> vm.showMessage("这个视频地址已经失效，刷新页面再试")
-                    action == MediaAction.DOWNLOAD -> {
-                        if (enqueueVideo(context, downloads, match, active.url)) {
-                            vm.showMessage("已开始下载")
-                            downloadItems = downloads.query()
+        // 视频画面上的「全屏 / 下载 / 投屏」按钮。地址是页面给的，必须和当前页面提取到的
+        // 视频源对得上才执行——注入的 JS 接口对页面里所有脚本（含跨域 iframe）都可见。
+        pool.onMediaAction = { action, url, extra ->
+            val tabId = active.id
+            pool.evaluateVideos(tabId) { sources ->
+                val fromPage = sources.firstOrNull { it.url == url }
+                if (fromPage == null) {
+                    vm.showMessage("这个视频地址已经失效，刷新页面再试")
+                    return@evaluateVideos
+                }
+                // 页面里那个地址是不是 MSE 的壳子（blob:/data:）。是的话它出了页面就取不到
+                // 内容，真实流只能靠网络层嗅探——欧乐影院这类站点就是这种情形。
+                val sniffed = pool.sniffedPlayableUrl(tabId)
+                val target = if (fromPage.isStream) sniffed else fromPage.url
+                when (action) {
+                    MediaAction.PLAY -> {
+                        if (target == null) {
+                            vm.showMessage("没嗅到这个视频的真实流地址，先让它播几秒再试")
                         } else {
-                            vm.showMessage(
-                                if (match.isStream) "blob/MSE 流式视频下载不了" else "无法开始下载",
-                            )
+                            openInPlayer(context, target, active.title, active.url, extra, vm)
                         }
                     }
-                    action == MediaAction.CAST -> {
-                        if (!cast.playOnDevice(match.url, match.type)) {
-                            vm.showMessage("没有能投屏播放该视频的应用")
+                    MediaAction.DOWNLOAD -> {
+                        if (target == null) {
+                            vm.showMessage("没嗅到这个视频的真实流地址，先让它播几秒再试")
+                        } else {
+                            startDownload(target, active.title)
                         }
+                    }
+                    MediaAction.CAST -> {
+                        val ok = target != null && cast.playOnDevice(target, fromPage.type)
+                        if (!ok) vm.showMessage("没有能投屏播放该视频的应用")
                     }
                 }
             }
@@ -342,6 +385,16 @@ fun BrowserScreen(
                     onOpen = { id -> downloads.contentUri(id)?.let { openUri(context, it, vm) } },
                     onRemove = { id -> downloads.remove(id); downloadItems = downloads.query() },
                     onBack = { vm.closeSecondarySurface() },
+                    // 离线缓存的条目只能在应用内播：它存在应用私有目录里，没有对外的文件。
+                    offline = offlineItems,
+                    onOpenOffline = { item ->
+                        vm.closeSecondarySurface()
+                        openInPlayer(context, item.url, item.title, active.url, "0", vm)
+                    },
+                    onRemoveOffline = { item ->
+                        OfflineMedia.remove(context, item.url)
+                        offlineItems = OfflineMedia.items(context)
+                    },
                 )
                 BrowserSurface.Privacy -> PrivacyScreen(
                     trackerCount = trackerCount,
@@ -367,6 +420,7 @@ fun BrowserScreen(
                     onBlockTrackersChange = { vm.setBlockTrackers(it) },
                     onOpenDownloads = {
                         downloadItems = downloads.query()
+                        offlineItems = OfflineMedia.items(context)
                         vm.openSurface(BrowserSurface.Downloads)
                     },
                     onBack = { vm.closeSecondarySurface() },
@@ -425,6 +479,7 @@ fun BrowserScreen(
                         },
                         onDownloads = {
                             downloadItems = downloads.query()
+                            offlineItems = OfflineMedia.items(context)
                             vm.openSurface(BrowserSurface.Downloads)
                         },
                         onReader = { extractReadable(pool, active.id, vm) { reader = it } },
@@ -441,19 +496,19 @@ fun BrowserScreen(
                         onClick = {
                             vm.closeMenu()
                             pool.evaluateVideos(active.id) { sources ->
-                                // blob:/data:（MSE 流式）根本交给不了 DownloadManager，
-                                // 一个源就直接下之前必须先把它排除掉，否则点一下就是闪退。
+                                // blob:/data:（MSE 流式）交给不了 DownloadManager，先排掉；
+                                // 一个源都没有或者只剩流式源时，退回网络层嗅探到的真实流——
+                                // 欧乐影院这类站点只有这样才有得下。
                                 val files = sources.filterNot { it.isStream }
+                                val sniffed = pool.sniffedPlayableUrl(active.id)
                                 when {
-                                    sources.isEmpty() -> vm.showMessage("本页没有找到可下载的视频")
-                                    files.isEmpty() -> vm.showMessage("本页视频是 blob/MSE 流式地址，浏览器取不到文件")
-                                    files.size == 1 -> {
-                                        if (!enqueueVideo(context, downloads, files.first(), active.url)) {
-                                            vm.showMessage("无法开始下载")
-                                        }
-                                        downloadItems = downloads.query()
-                                    }
-                                    else -> mediaSheet = MediaSheet.Download(sources)
+                                    files.size == 1 ->
+                                        startDownload(files.first().url, active.title)
+                                    files.size > 1 -> mediaSheet = MediaSheet.Download(files)
+                                    sniffed != null -> startDownload(sniffed, active.title)
+                                    sources.isNotEmpty() ->
+                                        vm.showMessage("这个视频是流式播放，还没拿到真实地址，先播几秒再试")
+                                    else -> vm.showMessage("本页没有找到可下载的视频")
                                 }
                             }
                         },
@@ -493,10 +548,7 @@ fun BrowserScreen(
                 icon = AuroraIcons.Download,
                 onPick = { source ->
                     mediaSheet = null
-                    if (!enqueueVideo(context, downloads, source, active.url)) {
-                        vm.showMessage("无法开始下载")
-                    }
-                    downloadItems = downloads.query()
+                    startDownload(source.url, active.title)
                 },
                 onDismiss = { mediaSheet = null },
             )
@@ -521,18 +573,29 @@ fun BrowserScreen(
                 },
                 onCastVideo = {
                     pool.evaluateVideos(active.id) { sources ->
+                        // 同下载：页面里只有 blob:（MSE）时，退回嗅探到的真实流，
+                        // 否则投出去的地址电视根本取不到内容。
+                        val files = sources.filterNot { it.isStream }
+                        val sniffed = pool.sniffedPlayableUrl(active.id)
+                        val single = files.singleOrNull()
                         when {
-                            sources.isEmpty() -> {
+                            single != null -> {
                                 mediaSheet = null
-                                vm.showMessage("本页没有找到可投屏的视频")
-                            }
-                            sources.size == 1 -> {
-                                mediaSheet = null
-                                if (!cast.playOnDevice(sources.first().url, sources.first().type)) {
+                                if (!cast.playOnDevice(single.url, single.type)) {
                                     vm.showMessage("没有能投屏播放该视频的应用")
                                 }
                             }
-                            else -> mediaSheet = MediaSheet.CastVideo(sources)
+                            files.size > 1 -> mediaSheet = MediaSheet.CastVideo(files)
+                            sniffed != null -> {
+                                mediaSheet = null
+                                if (!cast.playOnDevice(sniffed, "")) {
+                                    vm.showMessage("没有能投屏播放该视频的应用")
+                                }
+                            }
+                            else -> {
+                                mediaSheet = null
+                                vm.showMessage("本页没有找到可投屏的视频")
+                            }
                         }
                     }
                 },
@@ -554,27 +617,36 @@ private sealed interface MediaSheet {
 }
 
 /**
- * 把提取到的视频地址交给 `DownloadManager`。
+ * 拿内置播放器（Media3）全屏播这个地址。
  *
- * `DownloadListener` 那条路拿不到 `userAgent`（这个地址不是页面主动触发的下载），
- * 所以用 WebView 的默认 UA 补上——不少站点的视频 CDN 会校验 UA 与 Referer。
+ * 网页里的「全屏」按钮走的就是这里。以前是直接 `video.requestFullscreen()`，但视频站
+ * 普遍用 MSE，`<video>` 只是个 `blob:` 壳子，WebView 把它的自定义 View 搬上窗口之后
+ * 画面就是黑的——用户实测的「全屏之后是黑屏」。换成原生播放器就没有这一层。
+ *
+ * @param extra 页面传过来的「当前播到第几秒」；解析不了就从头播。
  */
-private fun enqueueVideo(
+private fun openInPlayer(
     context: Context,
-    downloads: DownloadsRepository,
-    source: VideoSource,
+    url: String,
+    title: String,
     referer: String?,
-): Boolean {
-    // 双保险：调用方已经滤过流式地址，这里再挡一次，免得以后新增入口时漏掉。
-    if (source.isStream || !downloads.canDownload(source.url)) return false
-    val request = DownloadRequest(
-        url = source.url,
-        userAgent = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull(),
-        contentDisposition = null,
-        mimeType = source.type.takeIf { it.isNotBlank() },
-        contentLength = -1L,
-    )
-    return downloads.enqueue(request, referer = referer) != null
+    extra: String,
+    vm: BrowserViewModel,
+) {
+    val startMs = extra.trim().toLongOrNull()?.coerceAtLeast(0L)?.times(1000L) ?: 0L
+    runCatching { context.startActivity(PlayerActivity.intent(context, url, title, referer, startMs)) }
+        .onFailure { vm.showMessage("无法打开内置播放器") }
+}
+
+/**
+ * 这个地址是不是「流媒体播放列表」（HLS / DASH）。
+ *
+ * 判断要不要走 Media3 离线缓存的关键：播放列表不能当文件下——系统 `DownloadManager`
+ * 只会存下那个几 KB 的文本，视频一个字节都没有。
+ */
+private fun isPlaylistUrl(url: String): Boolean {
+    val path = url.substringBefore('?').substringBefore('#').lowercase()
+    return path.endsWith(".m3u8") || path.endsWith(".mpd")
 }
 
 /** 菜单面板的 4×2 动作网格（规格 5.5）。 */

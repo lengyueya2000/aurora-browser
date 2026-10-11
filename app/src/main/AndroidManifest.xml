@@ -1,6 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+      离线缓存（Media3 的 DownloadService）要以前台服务跑：HLS 是一堆分片，下起来是
+      分钟级的任务，没有前台服务，用户切走应用就被系统连任务一起收走。
+      POST_NOTIFICATIONS 只是让那条进度通知可见，拒绝也不影响下载本身。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
       投屏与「把视频交给播放器打开」都要先问系统「有没有应用能接」。Android 11+ 的包
@@ -53,5 +61,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          内置播放器。configChanges 必须全列上：转屏、隐藏系统栏都会让 Activity 重建，
+          一重建 ExoPlayer 就被销毁，画面回到第 0 秒——用户看到的是「一转屏就从头播」。
+        -->
+        <activity
+            android:name=".media.PlayerActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|fontScale|layoutDirection|locale|touchscreen|colorMode|grammaticalGender|fontWeightAdjustment"
+            android:theme="@style/Theme.Aurora" />
+
+        <service
+            android:name=".media.AuroraDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

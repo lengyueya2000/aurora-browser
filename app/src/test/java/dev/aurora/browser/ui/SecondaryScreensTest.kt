@@ -15,6 +15,7 @@ import dev.aurora.browser.data.DownloadItem
 import dev.aurora.browser.domain.SearchEngine
 import dev.aurora.browser.domain.model.Bookmark
 import dev.aurora.browser.domain.model.HistoryEntry
+import dev.aurora.browser.media.OfflineItem
 import dev.aurora.browser.ui.components.SiteSecurity
 import dev.aurora.browser.ui.downloads.DownloadTab
 import dev.aurora.browser.ui.downloads.DownloadsScreen
@@ -279,6 +280,39 @@ class SecondaryScreensTest {
             }
         }
         compose.onNodeWithText("没有进行中的下载").assertExists()
+    }
+
+    /**
+     * 离线缓存（Media3）和系统下载共用一张列表：站点只给 HLS 分片时没法存成单个文件，
+     * 只能进离线缓存，用户看到的是同一处「已下载」。
+     */
+    @Test fun downloadsShowOfflineCacheRows() {
+        val offline = OfflineItem(
+            url = "https://c.com/v/master.m3u8",
+            title = "离线电影",
+            state = OfflineItem.State.COMPLETED,
+            percent = 100f,
+            bytes = 314_572_800L,
+        )
+        var opened: OfflineItem? = null
+        var removed: OfflineItem? = null
+        compose.setContent {
+            AuroraTheme {
+                DownloadsScreen(
+                    downloads = emptyList(),
+                    onOpen = {}, onRemove = {}, onBack = {},
+                    initialTab = DownloadTab.DONE,
+                    offline = listOf(offline),
+                    onOpenOffline = { opened = it },
+                    onRemoveOffline = { removed = it },
+                )
+            }
+        }
+        compose.onNodeWithText("离线电影").assertExists()
+        compose.onNodeWithContentDescription("打开下载文件").performClick()
+        compose.onNodeWithContentDescription("删除下载").performClick()
+        assertThat(opened?.url).isEqualTo("https://c.com/v/master.m3u8")
+        assertThat(removed?.url).isEqualTo("https://c.com/v/master.m3u8")
     }
 
     // ---------- 隐私 ----------
