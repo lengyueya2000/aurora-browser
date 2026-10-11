@@ -2105,6 +2105,7 @@ package dev.aurora.browser.ui.browser
 
 import android.content.Context
 import android.webkit.WebView
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import com.google.common.truth.Truth.assertThat
@@ -2169,6 +2170,30 @@ class WebViewContainerTest {
         assertThat(web).isNotNull()
         assertThat(shadowOf(web!!).lastLoadedUrl).isNull()
     }
+
+    // 重组后传入的新回调必须生效：客户端不能一直调用首次组合时捕获的那个 lambda。
+    @Test fun callbacksFollowTheLatestLambdaAfterRecomposition() {
+        var first = -1
+        var second = -1
+        val useSecond = mutableStateOf(false)
+        val f = WebViewFactory()
+        compose.setContent {
+            AuroraTheme {
+                val onProgress: (Int) -> Unit =
+                    if (useSecond.value) { { second = it } } else { { first = it } }
+                WebViewContainer(
+                    controller = FakeController(), url = null,
+                    onProgress = onProgress, factory = f.factory,
+                )
+            }
+        }
+        useSecond.value = true
+        compose.waitForIdle()
+        val web = f.created!!
+        shadowOf(web).webChromeClient.onProgressChanged(web, 42)
+        assertThat(second).isEqualTo(42)
+        assertThat(first).isEqualTo(-1)
+    }
 }
 ```
 
@@ -2193,7 +2218,9 @@ import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalContext
@@ -2232,19 +2259,25 @@ fun WebViewContainer(
         }
     }
 
+    // 回调用 rememberUpdatedState 包一层：下面 DisposableEffect 的 key 只有 webView，
+    // 若直接捕获回调，重组后新传入的 lambda 会被忽略，客户端会一直调用首次组合的那个。
+    val currentOnProgress by rememberUpdatedState(onProgress)
+    val currentOnTitleChange by rememberUpdatedState(onTitleChange)
+    val currentOnUrlChange by rememberUpdatedState(onUrlChange)
+
     // 把 WebView 的进度/标题/URL 变化桥接给上层
     DisposableEffect(webView) {
         val client = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
-                onTitleChange(view.title.orEmpty())
-                onUrlChange(url)
+                currentOnTitleChange(view.title.orEmpty())
+                currentOnUrlChange(url)
             }
         }
         webView.webViewClient = client
         webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView, newProgress: Int) = onProgress(newProgress)
+            override fun onProgressChanged(view: WebView, newProgress: Int) = currentOnProgress(newProgress)
             override fun onReceivedTitle(view: WebView, title: String?) =
-                onTitleChange(title.orEmpty())
+                currentOnTitleChange(title.orEmpty())
         }
         onDispose {
             webView.stopLoading()
@@ -2290,7 +2323,7 @@ interface BindableController : BrowserController {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.browser.WebViewContainerTest"`
-Expected: BUILD SUCCESSFUL，2 tests passed
+Expected: BUILD SUCCESSFUL，3 tests passed
 
 - [ ] **Step 5: 提交**
 
@@ -3769,10 +3802,10 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 6: 跑全部测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL，全部任务累计 73 tests passed
+Expected: BUILD SUCCESSFUL，全部任务累计 74 tests passed
 
 > 本任务新增的 `OmniboxScreenTest`（4 例）、`HomeScreenTest`（4 例）、`BrowserScreenTest`（5 例）
-> 共 13 例；加上前 11 个任务的 60 例，合计 73 例。
+> 共 13 例；加上前 11 个任务的 61 例，合计 74 例。
 
 - [ ] **Step 7: 手动冒烟验证**
 
