@@ -282,12 +282,22 @@ import org.junit.Test
 class TokensTest {
     @Test fun semanticColorsMatchSpec() {
         val c = DarkAuroraColors
-        assertThat(c.bg).isEqualTo(Color(0xFF0F172A))
-        assertThat(c.surface).isEqualTo(Color(0xFF1B2336))
-        assertThat(c.brand).isEqualTo(Color(0xFF38BDF8))
-        assertThat(c.success).isEqualTo(Color(0xFF22C55E))
-        assertThat(c.danger).isEqualTo(Color(0xFFEF4444))
-        assertThat(c.onBrand).isEqualTo(Color(0xFF0F172A))
+        assertThat(
+            listOf(
+                c.bg, c.bgElevated, c.surface, c.surfaceHover, c.border, c.divider,
+                c.text, c.textSecondary, c.textMuted, c.textDisabled,
+                c.brand, c.brandStrong, c.onBrand,
+                c.success, c.warning, c.danger,
+                c.scrim, c.glass, c.glassBorder,
+            )
+        ).containsExactly(
+            Color(0xFF0F172A), Color(0xFF131C31), Color(0xFF1B2336), Color(0xFF272F42),
+            Color(0xFF334155), Color(0x2994A3B8),
+            Color(0xFFF8FAFC), Color(0xFFCBD5E1), Color(0xFF94A3B8), Color(0xFF64748B),
+            Color(0xFF38BDF8), Color(0xFF0EA5E9), Color(0xFF0F172A),
+            Color(0xFF22C55E), Color(0xFFF59E0B), Color(0xFFEF4444),
+            Color(0xB8020617), Color(0xB8131C31), Color(0x2494A3B8),
+        ).inOrder()
     }
 
     @Test fun spacingFollowsFourEightRhythm() {
@@ -300,11 +310,29 @@ class TokensTest {
         ).containsExactly(4f, 8f, 12f, 16f, 24f, 32f, 48f).inOrder()
     }
 
+    @Test fun radiusScaleMatchesSpec() {
+        assertThat(
+            listOf(
+                AuroraRadius.xs.value, AuroraRadius.s.value, AuroraRadius.m.value,
+                AuroraRadius.l.value, AuroraRadius.xl.value, AuroraRadius.full.value,
+            )
+        ).containsExactly(6f, 10f, 14f, 20f, 28f, 999f).inOrder()
+    }
+
+    @Test fun motionDurationsMatchSpec() {
+        assertThat(listOf(AuroraMotion.FAST, AuroraMotion.BASE, AuroraMotion.SLOW))
+            .containsExactly(120, 200, 320).inOrder()
+    }
+
     @Test fun touchTargetMinimumIs48dp() {
         assertThat(AuroraSpacing.touchTarget.value).isAtLeast(48f)
+        assertThat(AuroraSpacing.touchGap.value).isAtLeast(8f)
     }
 }
 ```
+
+> 十九个语义色全部断言，包括四个 alpha 合成值——它们是最容易抄错的一批，
+> 而原稿只覆盖了 6 个。圆角与动效同理：一个 `full` 写错照样能编译通过。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -368,8 +396,6 @@ object AuroraMotion {
     const val BASE = 200
     const val SLOW = 320
     val standard = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-    /** 返回系统是否要求移除动画时应采用的时长（0 表示即时）。 */
-    fun duration(base: Int, animationsEnabled: Boolean): Int = if (animationsEnabled) base else 0
 }
 ```
 
@@ -423,7 +449,7 @@ object Aurora {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.theme.TokensTest"`
-Expected: BUILD SUCCESSFUL，3 tests passed
+Expected: BUILD SUCCESSFUL，5 tests passed
 
 - [ ] **Step 5: 提交**
 
@@ -3646,10 +3672,10 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 6: 跑全部测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL，全部任务累计 68 tests passed
+Expected: BUILD SUCCESSFUL，全部任务累计 70 tests passed
 
 > 本任务新增的 `OmniboxScreenTest`（4 例）、`HomeScreenTest`（4 例）、`BrowserScreenTest`（5 例）
-> 共 13 例；加上前 11 个任务的 55 例，合计 68 例。
+> 共 13 例；加上前 11 个任务的 57 例，合计 70 例。
 
 - [ ] **Step 7: 手动冒烟验证**
 
