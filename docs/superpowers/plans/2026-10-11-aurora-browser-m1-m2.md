@@ -2339,7 +2339,21 @@ git commit -m "feat(browser): wrap WebView behind a testable BrowserController"
 **Files:**
 - Create: `app/src/main/java/dev/aurora/browser/ui/browser/BrowserSurface.kt`
 - Create: `app/src/main/java/dev/aurora/browser/ui/browser/BrowserViewModel.kt`
+- Modify: `gradle/libs.versions.toml`、`app/build.gradle.kts`（加 `kotlinx-coroutines-test` 测试依赖）
 - Test: `app/src/test/java/dev/aurora/browser/ui/browser/BrowserViewModelTest.kt`
+
+> **先加测试依赖。** `BrowserViewModel` 的构造函数里有 `stateIn(viewModelScope, …)`，而
+> `viewModelScope` 用的是 `Dispatchers.Main.immediate`；纯 JVM 单测里 Main 派发器不可用，
+> 构造 ViewModel 会直接抛
+> `IllegalStateException: Module with the Main dispatcher had failed to initialize`。
+> 所以测试必须先 `Dispatchers.setMain(...)`，并显式声明 `kotlinx-coroutines-test`
+> （版本与 classpath 上的 coroutines-core 一致：`1.7.3`；它当前只是被传递依赖带进来，
+> 显式声明以免将来上游变动后突然编译不过）。
+>
+> `gradle/libs.versions.toml` 的 `[versions]` 加 `coroutinesTest = "1.7.3"`；
+> `[libraries]` 加
+> `kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutinesTest" }`。
+> `app/build.gradle.kts` 的 `dependencies` 加 `testImplementation(libs.kotlinx.coroutines.test)`。
 
 **Interfaces:**
 - Consumes: `TabRepository`（Task 7）、`BackPressDispatcher`（Task 8）
@@ -2382,9 +2396,21 @@ package dev.aurora.browser.ui.browser
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.domain.BackOutcome
 import dev.aurora.browser.domain.TabRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class BrowserViewModelTest {
+    // viewModelScope 走 Dispatchers.Main；纯 JVM 单测必须先注入测试派发器，否则构造即抛异常。
+    @Before fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
+    @After fun tearDown() = Dispatchers.resetMain()
+
     private fun vm() = BrowserViewModel(tabs = TabRepository(), back = dev.aurora.browser.domain.BackPressDispatcher())
 
     @Test fun startsOnPageSurface() {
