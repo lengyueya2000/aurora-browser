@@ -708,9 +708,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.unit.dp
 // DpRect 的 width/height 是扩展属性，不是成员——缺这两个 import 测试编译不过。
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
@@ -776,6 +774,18 @@ class BottomToolbarTest {
         }
     }
 
+    @Test fun adjacentSlotsKeepMinimumTouchGap() {
+        render()
+        val labels = listOf("后退", "前进", "主页", "标签页，3 个", "更多")
+        val bounds = labels.map {
+            compose.onNodeWithContentDescription(it).getUnclippedBoundsInRoot()
+        }
+        // DpRect 的 left/right 是成员，width 是扩展属性——两种写法别混。
+        bounds.zipWithNext { a, b ->
+            assertThat((b.left - a.right).value).isAtLeast(8f)
+        }
+    }
+
     @Test fun tabSlotHasClickAction() {
         render()
         compose.onNodeWithContentDescription("标签页，3 个").assertHasClickAction()
@@ -807,7 +817,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -850,7 +859,7 @@ fun BottomToolbar(
             )
             .padding(horizontal = AuroraSpacing.s),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.touchGap),
     ) {
         ToolbarSlot(
             icon = AuroraIcons.Back, label = "后退",
@@ -945,7 +954,7 @@ private fun ToolbarSlot(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "dev.aurora.browser.ui.components.BottomToolbarTest"`
-Expected: BUILD SUCCESSFUL，6 tests passed
+Expected: BUILD SUCCESSFUL，7 tests passed
 
 - [ ] **Step 5: 提交**
 
@@ -3682,10 +3691,10 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 6: 跑全部测试确认通过**
 
 Run: `./gradlew :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL，全部任务累计 70 tests passed
+Expected: BUILD SUCCESSFUL，全部任务累计 71 tests passed
 
 > 本任务新增的 `OmniboxScreenTest`（4 例）、`HomeScreenTest`（4 例）、`BrowserScreenTest`（5 例）
-> 共 13 例；加上前 11 个任务的 57 例，合计 70 例。
+> 共 13 例；加上前 11 个任务的 58 例，合计 71 例。
 
 - [ ] **Step 7: 手动冒烟验证**
 
