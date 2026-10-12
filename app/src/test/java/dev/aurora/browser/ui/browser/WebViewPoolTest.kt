@@ -580,11 +580,12 @@ class WebViewPoolTest {
     /**
      * 记录取景框的假取景器。真机由 `PixelCopy` 实现，测试里没有真窗口，用它顶替。
      *
-     * [ok] 模拟 `PixelCopy` 的结果码，[blank] 模拟「抠到了但窗口还没画出页面」。
+     * [ok] 模拟 `PixelCopy` 的结果码，[blankTimes] 模拟「抠到了但窗口还没画出页面」——
+     * 前几次抠到纯色，之后才有内容。
      */
     private class FakeCapture(
         private val ok: Boolean = true,
-        private val blank: Boolean = false,
+        private val blankTimes: Int = 0,
     ) : WindowCapture {
         val sources = mutableListOf<Rect>()
         override fun capture(
@@ -596,7 +597,7 @@ class WebViewPoolTest {
             sources += Rect(source)
             if (ok) {
                 dest.eraseColor(android.graphics.Color.WHITE)
-                if (!blank) {
+                if (sources.size > blankTimes) {
                     // 上下两半不同色：真实页面必然有这种色差，纯色会被当成「没拍到」。
                     Canvas(dest).drawRect(
                         0f, 0f, dest.width.toFloat(), dest.height / 2f,
@@ -651,13 +652,24 @@ class WebViewPoolTest {
 
     private fun idleMain() = shadowOf(Looper.getMainLooper()).idle()
 
+    /** 把时钟往前推，让延后拍的这一拍真正跑起来。 */
+    private fun advance(ms: Long) =
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(ms))
+
+    /** 时间表上第 n 拍之前的等待。 */
+    private fun CaptureGap(index: Int) = WebViewPool.CaptureGapsMs[index]
+
+    /** 把时间表上的每一拍都推完（每一拍都失败时才会走到最后一次）。 */
+    private fun exhaustCaptureAttempts() =
+        WebViewPool.CaptureGapsMs.forEach { advance(it + 50) }
+
     @Test fun asyncCaptureStoresAScaledThumbnail() {
         val capture = FakeCapture()
         val (pool, web) = attachedTab(capture)
         var captured: Bitmap? = null
 
         pool.captureThumbnailAsync("a", window(web), bottomInsetPx = 0) { captured = it }
-        idleMain()
+        advance(CaptureGap(0))
 
         assertThat(capture.sources).hasSize(1)
         assertThat(captured).isNotNull()
@@ -672,32 +684,20 @@ class WebViewPoolTest {
         val (pool, web) = attachedTab(capture)
 
         pool.captureThumbnailAsync("a", window(web), bottomInsetPx = 200) {}
-        idleMain()
+        advance(CaptureGap(0))
 
         // 取景框跟着 WebView 的位置走（真机上它不在窗口原点），只把底边往上收。
         val source = capture.sources.single()
         assertThat(source).isEqualTo(Rect(10, 160, 730, 1440 - 200))
     }
 
-    /** 抠到的是一整块底色（窗口还没画出页面）时当没拍到，别把底色当缩略图存下来。 */
-    @Test fun asyncCaptureRejectsAUniformWindow() {
-        val (pool, web) = attachedTab(FakeCapture(blank = true))
-        var captured: Bitmap? = null
-
-        pool.captureThumbnailAsync("a", window(web)) { captured = it }
-        idleMain()
-
-        assertThat(captured).isNull()
-        assertThat(pool.thumbnail("a")).isNull()
-    }
-
-    /** PixelCopy 自己失败时同样退回 `draw()`，最终没拍到就回 null。 */
+    /** PixelCopy 自己失败时同样退回 `draw()`，几次都没拍到就回 null。 */
     @Test fun asyncCaptureFallsBackWhenTheCopyFails() {
         val (pool, web) = attachedTab(FakeCapture(ok = false))
         var called = false
 
         pool.captureThumbnailAsync("a", window(web)) { called = true }
-        idleMain()
+        exhaustCaptureAttempts()
 
         assertThat(called).isTrue()
         assertThat(pool.thumbnail("a")).isNull()
@@ -709,22 +709,77 @@ class WebViewPoolTest {
         var captured: Bitmap? = null
 
         pool.captureThumbnailAsync("a", window = null) { captured = it }
-        idleMain()
+        exhaustCaptureAttempts()
 
         assertThat(captured).isNull()
     }
 
-    /** 页面刚 finish 时画面还在上一帧，所以要能延后拍。 */
-    @Test fun asyncCaptureHonoursTheDelay() {
+    /** 页面加载完到拍图之间要留出上屏时间，所以第一拍是延后的。 */
+    @Test fun asyncCaptureWaitsBeforeTheFirstShot() {
         val (pool, web) = attachedTab(FakeCapture())
         var captured = false
 
-        pool.captureThumbnailAsync("a", window(web), delayMs = 400) { captured = true }
+        pool.captureThumbnailAsync("a", window(web)) { captured = true }
         idleMain()
         assertThat(captured).isFalse()
 
-        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(400))
+        advance(CaptureGap(0))
         assertThat(captured).isTrue()
+    }
+
+    /**
+     * 第一次拍到纯色（页面还没画上屏）要接着试，不能就此放弃。
+     *
+     * 实测就是这么回事：第一次 `onPageFinished` 后 400ms 抠到的仍是一整块底色，同一个页面
+     * 第二次加载完成时才拍得到。只拍一次的话，缩略图永远停在占位图上。
+     */
+    @Test fun asyncCaptureRetriesAfterABlankShot() {
+        val capture = FakeCapture(blankTimes = 1)
+        val (pool, web) = attachedTab(capture)
+        var captured: Bitmap? = null
+
+        pool.captureThumbnailAsync("a", window(web)) { captured = it }
+
+        advance(CaptureGap(0))
+        assertThat(capture.sources).hasSize(1)
+        assertThat(captured).isNull()          // 这一拍是纯色，没存
+
+        advance(CaptureGap(1))
+        assertThat(capture.sources).hasSize(2)
+        assertThat(captured).isNotNull()
+        assertThat(pool.thumbnail("a")).isSameInstanceAs(captured)
+    }
+
+    /** 几次都拍不到就认了，别无限重试下去。 */
+    @Test fun asyncCaptureGivesUpAfterTheLastAttempt() {
+        val capture = FakeCapture(blankTimes = Int.MAX_VALUE)
+        val (pool, web) = attachedTab(capture)
+        var called = false
+
+        pool.captureThumbnailAsync("a", window(web)) { called = true }
+        exhaustCaptureAttempts()
+
+        assertThat(capture.sources).hasSize(WebViewPool.CaptureGapsMs.size)
+        assertThat(called).isTrue()
+        assertThat(pool.thumbnail("a")).isNull()
+    }
+
+    /**
+     * 每一拍都回调，最后留下的必须是最后那张。
+     *
+     * 因为画面是逐段画出来的：早拍到的那张可能只有上半个屏幕是页面、下半个还是底色。
+     */
+    @Test fun asyncCaptureKeepsTheLatestShot() {
+        val capture = FakeCapture()
+        val (pool, web) = attachedTab(capture)
+        val seen = mutableListOf<Bitmap>()
+
+        pool.captureThumbnailAsync("a", window(web)) { it?.let(seen::add) }
+        exhaustCaptureAttempts()
+
+        assertThat(capture.sources).hasSize(WebViewPool.CaptureGapsMs.size)
+        assertThat(seen).hasSize(WebViewPool.CaptureGapsMs.size)
+        assertThat(pool.thumbnail("a")).isSameInstanceAs(seen.last())
     }
 
     /**
@@ -743,7 +798,7 @@ class WebViewPoolTest {
         assertThat(web.isAttachedToWindow).isFalse()
 
         pool.captureThumbnailAsync("a", window(web)) {}
-        idleMain()
+        exhaustCaptureAttempts()
 
         assertThat(capture.sources).isEmpty()
         assertThat(pool.thumbnail("a")).isNull()
@@ -767,7 +822,7 @@ class WebViewPoolTest {
         activity.setContentView(web)
 
         pool.captureThumbnailAsync("a", window(web)) {}
-        idleMain()
+        exhaustCaptureAttempts()
 
         assertThat(capture.sources).isEmpty()
     }

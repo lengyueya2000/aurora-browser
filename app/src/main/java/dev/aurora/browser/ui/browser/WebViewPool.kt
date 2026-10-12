@@ -198,17 +198,41 @@ class WebViewPool(
      * [bottomInsetPx] 用来避开叠在网页上的悬浮工具栏：抠图抠的是窗口像素，工具栏会一起被
      * 抠进去。缩略图本来就把整页压扁到 5:3，少一条底边不影响可辨识度。
      *
-     * [delayMs] 给页面一点上屏时间：`onPageFinished` 那一刻画面还是上一帧。
-     * [window] 为 null（或 `PixelCopy` 失败）时退回 `View.draw()`，再不行回 `null`。
+     * **拍一次不够，按 [CaptureGapsMs] 拍几次**：「页面加载完成」之后多久画上屏没有保证。
+     * 实测在 1080×1920 的模拟器上，第一次 `onPageFinished` 后 400ms 抠到的还是一整块底色
+     * （页面还没画出来）；而只按「拍到第一张」就收工的话，又会拿到一张画了一半的图（上半个
+     * 屏幕是页面、下半个还是底色）。所以每一拍都回调一次，后一次覆盖前一次——时间越晚画面
+     * 越完整。一直没拍到才回调 `null`。
+     *
+     * [window] 为 null（或几次都拍不到）时退回 `View.draw()`，再不行回 `null`。
      */
     fun captureThumbnailAsync(
         tabId: String,
         window: Window?,
         bottomInsetPx: Int = 0,
-        delayMs: Long = 0L,
         onCaptured: (Bitmap?) -> Unit = {},
+    ) = attemptCapture(tabId, window, bottomInsetPx, attempt = 0, onCaptured = onCaptured)
+
+    private fun attemptCapture(
+        tabId: String,
+        window: Window?,
+        bottomInsetPx: Int,
+        attempt: Int,
+        onCaptured: (Bitmap?) -> Unit,
     ) {
-        main.postDelayed({ captureNow(tabId, window, bottomInsetPx, onCaptured) }, delayMs)
+        main.postDelayed({
+            captureNow(tabId, window, bottomInsetPx) { bitmap ->
+                if (bitmap != null) {
+                    onCaptured(bitmap)
+                } else if (attempt == CaptureGapsMs.lastIndex) {
+                    // 最后一次还是没拍到就认了，让网格画占位图，别一直重试下去。
+                    onCaptured(null)
+                }
+                if (attempt < CaptureGapsMs.lastIndex) {
+                    attemptCapture(tabId, window, bottomInsetPx, attempt + 1, onCaptured)
+                }
+            }
+        }, CaptureGapsMs[attempt])
     }
 
     private fun captureNow(
@@ -233,13 +257,21 @@ class WebViewPool(
             Bitmap.createBitmap(source.width(), source.height(), Bitmap.Config.RGB_565)
         }.getOrNull() ?: return onCaptured(captureThumbnail(tabId))
 
-        windowCapture.capture(window, source, raw) { ok ->
-            // 纯色同样当没拍到：窗口还没画出页面时抠到的是一整块底色。
-            val scaled = if (ok && !isBlankThumbnail(raw)) scaleToThumbnail(raw) else null
+        val failure = runCatching {
+            windowCapture.capture(window, source, raw) { ok ->
+                // 纯色同样当没拍到：窗口还没画出页面时抠到的是一整块底色。
+                val scaled = if (ok && !isBlankThumbnail(raw)) scaleToThumbnail(raw) else null
+                raw.recycle()
+                if (scaled == null) return@capture onCaptured(captureThumbnail(tabId))
+                thumbnails.put(tabId, scaled)
+                onCaptured(scaled)
+            }
+        }.exceptionOrNull()
+        // 抠图请求本身抛异常（窗口没有 surface、取景框越界）时不能让主线程崩：退回 draw()。
+        if (failure != null) {
+            Log.w(TAG, "抠窗口画面失败，退回 draw()", failure)
             raw.recycle()
-            if (scaled == null) return@capture onCaptured(captureThumbnail(tabId))
-            thumbnails.put(tabId, scaled)
-            onCaptured(scaled)
+            onCaptured(captureThumbnail(tabId))
         }
     }
 
@@ -342,6 +374,15 @@ class WebViewPool(
          */
         internal const val ThumbnailWidth = 320
         internal const val ThumbnailHeight = 192
+
+        /**
+         * 拍缩略图的时间表（毫秒）：页面加载完成后等第一格这么久再拍，拍不到就按下一格再试。
+         *
+         * 为什么不能只拍一次：`onPageFinished` 与「画面真的画上屏了」之间没有保证。实测在
+         * 1080×1920 的模拟器上，第一次 `onPageFinished` 后 400ms 抠到的仍是一整块底色，
+         * 得等到页面第二次加载完成才拍得到。与其猜一个够长的延时，不如拍不到就再试。
+         */
+        internal val CaptureGapsMs = longArrayOf(400L, 1500L, 3000L)
 
         /**
          * 默认的取景范围：WebView 挂在窗口上时是它自己的位置和尺寸，否则看不见。

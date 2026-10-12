@@ -254,11 +254,11 @@ fun BrowserScreen(
             vm.onPageFinished(id, title, url)
             controller.refreshHistory()
             // 顺手拍一张缩略图。为什么是这一刻：WebView 的画面由渲染进程合成，只有它正
-            // 显示着才拍得到，而「页面刚加载完」是唯一能确定它正显示着、画面又稳定了的时机。
-            // 隔一小会儿再拍是因为 finish 那一刻还在上屏，抠到的还是上一帧。
+            // 显示着才拍得到，而「页面加载完」是唯一能确定它正显示着、画面又稳定了的时机。
+            // 拍不到（页面还没画上屏）由池自己按时间表重试，见 WebViewPool.CaptureGapsMs。
             val tab = tabs.firstOrNull { it.id == id }
             if (tab != null && !tab.isIncognito) {
-                pool.captureThumbnailAsync(id, window, toolbarInsetPx, CaptureDelayMs) { bitmap ->
+                pool.captureThumbnailAsync(id, window, toolbarInsetPx) { bitmap ->
                     if (bitmap != null) tabThumbnails = tabThumbnails + (id to bitmap)
                 }
             }
@@ -776,9 +776,6 @@ private fun tabThumbnailMap(
     if (!active.isIncognito && pool.thumbnail(active.id) == null) pool.captureThumbnail(active.id)
     return tabs.mapNotNull { tab -> pool.thumbnail(tab.id)?.let { tab.id to it } }.toMap()
 }
-
-/** 页面加载完到拍缩略图之间的等待：让画面先上屏，否则抠到的还是上一帧。 */
-private const val CaptureDelayMs = 400L
 
 /** 菜单面板的 4×2 动作网格（规格 5.5）。 */
 @Composable
