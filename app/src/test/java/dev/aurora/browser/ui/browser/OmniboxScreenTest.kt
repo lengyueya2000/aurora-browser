@@ -79,6 +79,22 @@ class OmniboxScreenTest {
     }
 
     /**
+     * 真机反馈：「点击输入框，可以自由编辑网址，而不是默认复制」。
+     *
+     * 两件事一起钉住：框里确实预填了当前网址（不然没得改），而且**整段选中**——
+     * 敲一个字符应该是把它整段换掉，而不是接在末尾变成「https://a.comb」。
+     */
+    @Test fun prefilledUrlIsSelectedSoTypingReplacesIt() {
+        val typed = mutableListOf<String>()
+        render(query = "https://a.com", onQueryChange = { typed += it })
+
+        compose.onNodeWithText("https://a.com").assertExists()
+        compose.onNodeWithContentDescription("地址栏输入").performTextInput("b")
+
+        assertThat(typed.last()).isEqualTo("b")
+    }
+
+    /**
      * 点建议行必须加载该行已经解析好的地址，而不是把标题当搜索词再搜一次——
      * 书签/历史建议的标题与地址是两回事。
      */

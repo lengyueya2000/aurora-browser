@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>极光浏览器 · 应用图标</title>
+<style>
+  :root{--paper:#FBF9F6;--pine:#0F5C4A;--ink:#1B1A17;--line:#DED8CE;--muted:#6A655C}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+  header{padding:40px 32px 8px;max-width:1020px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em}
+  header p{margin:0;color:var(--muted)}
+  section{max-width:1020px;margin:0 auto;padding:26px 32px;border-top:1px solid var(--line)}
+  h2{font-size:17px;margin:0 0 10px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .swap{display:flex;gap:10px;margin:0 0 20px;flex-wrap:wrap}
+  .swap button{font:inherit;font-size:13px;padding:7px 14px;border-radius:999px;cursor:pointer;
+                border:1px solid var(--line);background:#fff;color:var(--ink)}
+  .swap button[aria-pressed="true"]{background:var(--pine);border-color:var(--pine);color:#fff}
+  .grid{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:7px}
+  .cell span{font-size:11px;color:var(--muted)}
+  .mask{border-radius:50%;overflow:hidden;line-height:0}
+  .squircle{border-radius:26%;overflow:hidden;line-height:0}
+  .bare{line-height:0}
+  .onlight{background:#F2F0EC;padding:22px;border-radius:14px}
+  .ondark{background:#14181B;padding:22px;border-radius:14px}
+  .ondark .cell span{color:#8b949e}
+  .rowlabel{font-size:12px;color:var(--muted);margin:0 0 10px}
+  .note{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .note ul{margin:8px 0 0;padding-left:20px} .note li{margin:4px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;
+        background:#F2F0EC;padding:1px 5px;border-radius:5px}
+  .k{display:inline-block;min-width:16px;text-align:center;border:1px solid var(--line);
+      border-radius:4px;padding:0 5px;font-size:12px;background:#fff}
+  footer{max-width:1020px;margin:0 auto;padding:26px 32px 60px;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <radialGradient id="sky" gradientUnits="userSpaceOnUse" cx="50" cy="69" r="93">
+      <stop offset="0" stop-color="#155A45"/><stop offset="0.5" stop-color="#0A2C24"/>
+      <stop offset="1" stop-color="#04120F"/>
+    </radialGradient>
+    <linearGradient id="mint" gradientUnits="userSpaceOnUse" x1="28" y1="72" x2="81" y2="22">
+      <stop offset="0" stop-color="#3FC7F5" stop-opacity="0.9"/>
+      <stop offset="0.45" stop-color="#7FF3D0"/><stop offset="1" stop-color="#F7FFFC"/>
+    </linearGradient>
+
+    <radialGradient id="g-bg" cx="0.31" cy="0.29" r="0.85">
+      <stop offset="0" stop-color="#17715B"/><stop offset="0.5" stop-color="#105644"/>
+      <stop offset="1" stop-color="#0A3B30"/>
+    </radialGradient>
+    <radialGradient id="g-ball" cx="0.36" cy="0.33" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="0.55" stop-color="#D8E5E0"/>
+      <stop offset="1" stop-color="#A9CFC2"/>
+    </radialGradient>
+    <clipPath id="g-clip"><circle cx="54" cy="54" r="30"/></clipPath>
+
+    <linearGradient id="p-bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#FBF9F6"/><stop offset="1" stop-color="#EDE7DD"/>
+    </linearGradient>
+    <linearGradient id="p-mark" gradientUnits="userSpaceOnUse" x1="24" y1="24" x2="84" y2="84">
+      <stop offset="0" stop-color="#0F5C4A"/><stop offset="1" stop-color="#14856B"/>
+    </linearGradient>
+    <linearGradient id="d-bg" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#FBF9F6"/><stop offset="1" stop-color="#EDE7DD"/>
+    </linearGradient>
+    <linearGradient id="d-mark" gradientUnits="userSpaceOnUse" x1="24" y1="24" x2="84" y2="84">
+      <stop offset="0" stop-color="#0F5C4A"/><stop offset="1" stop-color="#14856B"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<header>
+  <h1>应用图标 · 1.16</h1>
+  <p>从「细线蓝地球」换成一道极光。按 <span class="k">1</span>–<span class="k">4</span> 切换四套方案。</p>
+</header>
+
+<section>
+  <div class="swap" id="swap"></div>
+  <p class="sub" id="desc"></p>
+
+  <div class="rowlabel">浅色壁纸</div>
+  <div class="grid onlight" id="row-light"></div>
+  <div class="rowlabel" style="margin-top:22px">深色壁纸</div>
+  <div class="grid ondark" id="row-dark"></div>
+  <div class="rowlabel" style="margin-top:22px">原始画布（虚线是 66dp 安全区，半径 33dp）</div>
+  <div class="grid" id="row-bare"></div>
+</section>
+
+<section>
+  <h2>为什么是极光</h2>
+  <p class="sub">联网查了 Chrome / Edge / Firefox / Brave / Arc / 夸克 / UC 这一批的做法，再对着自适应图标的规范定的。</p>
+  <div class="note">
+    <ul>
+      <li><strong>品类里没有极光。</strong>浏览器图标几乎清一色蓝白地球或蓝白记号（Chrome、Edge、QQ、小米、Via、Alook、Samsung）。极光既是这个应用的名字，也是这个品类里的空位。</li>
+      <li><strong>形状在小尺寸下不散。</strong>细线在 1024px 上好看，缩到 48px 就没了——原来那个地球的线宽换算过来约 4dp，48px 下不到 2 个像素。现在主体是一条宽 13dp 的实心弧，最厚处在 48px 下约 6 个像素。</li>
+      <li><strong>做不对称，是为了不变成彩虹。</strong>第一版是一条对称的拱，缩到 64px 以下读起来就是一道彩虹。现在中心线左腿低而长、峰偏右、右腿收得快，端点收成一点。</li>
+      <li><strong>外面那层淡光是关键。</strong>彩虹是一条边缘锋利的色带，极光是一团散开的光。VectorDrawable 没有模糊，就用一层同轴、峰宽 26dp、透明度 13% 的带当晕；主体仍然清晰，所以大尺寸下轮廓不糊、小尺寸下不散。</li>
+      <li><strong>渐变是为了立住，不是为了花。</strong>Chrome 2022 版去掉阴影但加了很轻的渐变，就是为了小尺寸下不糊；这里青 → 薄荷 → 近白的三段渐变，让「一道光」在 32px 下仍然有明暗层次。</li>
+      <li><strong>一个主体 + 一个点缀。</strong>主弧 + 一颗四角星；晕和伴带都是同一个主体的层，不是另外的元素。规范里的经验是三个以上元素在小尺寸下会变成噪点。</li>
+      <li><strong>尺寸是算出来的。</strong>整块先按 108 画布画好，再等比缩到最远 32dp，落在安全区（半径 33dp）以内。圆形、圆角方形、方形遮罩都不会切到，系统做视差放大也不会。</li>
+      <li><strong>单色层单独画。</strong>主题图标按 alpha 取形状，所以单色层是同一套带子，只是纯白；伴带保留 40% 透明度，主题图标上也就有了亮淡两层。</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>落地位置</h2>
+  <p class="sub">四个文件，都在 <code>app/src/main/res/</code> 下。</p>
+  <div class="note">
+    <ul>
+      <li><code>drawable/ic_launcher_background.xml</code> — 深青夜空（径向渐变）</li>
+      <li><code>drawable/ic_launcher_foreground.xml</code> — 极光带 + 伴带 + 四角星</li>
+      <li><code>drawable/ic_launcher_monochrome.xml</code> — 主题图标的单色层</li>
+      <li><code>mipmap-anydpi-v26/ic_launcher.xml</code> — 把三层接起来</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  深链：<code>#icon=aurora|globe|spark|diamond</code>；键 <span class="k">1</span>–<span class="k">4</span> 同效。
+  几何由 <code>.tmp/icon/gen_final.py</code> 生成，和 <code>ic_launcher_foreground.xml</code> 同一套坐标。
+</footer>
+
+<script>
+const CANDIDATES = {"aurora": {"name": "极光（已采用）", "body": "<rect width=\"108\" height=\"108\" fill=\"url(#sky)\"/><g transform=\"translate(54 54) scale(0.8163) translate(-54 -54)\"><path d=\"M29.26,78.35 L29.88,76.84 L30.48,75.38 L31.06,73.95 L31.63,72.54 L32.19,71.17 L32.74,69.83 L33.29,68.51 L33.83,67.23 L34.37,65.98 L34.90,64.76 L35.43,63.57 L35.96,62.41 L36.49,61.28 L37.01,60.18 L37.53,59.12 L38.05,58.08 L38.57,57.08 L39.08,56.11 L39.60,55.17 L40.11,54.26 L40.61,53.38 L41.12,52.54 L41.62,51.73 L42.12,50.95 L42.61,50.20 L43.10,49.48 L43.58,48.80 L44.05,48.15 L44.52,47.54 L44.99,46.95 L45.44,46.41 L45.89,45.89 L46.33,45.40 L46.75,44.95 L47.17,44.54 L47.57,44.15 L47.96,43.80 L48.33,43.48 L48.69,43.19 L49.03,42.93 L49.36,42.70 L49.66,42.49 L49.95,42.32 L50.21,42.17 L50.45,42.05 L50.66,41.94 L50.85,41.86 L51.02,41.80 L51.16,41.74 L51.27,41.70 L51.35,41.66 L51.41,41.60 L51.44,41.55 L51.46,41.49 L51.46,41.43 L51.45,41.37 L51.44,41.30 L51.42,41.22 L51.41,41.14 L51.40,41.05 L51.39,40.95 L51.40,40.85 L51.43,40.74 L51.47,40.63 L51.54,40.51 L51.63,40.40 L51.75,40.28 L51.89,40.17 L52.07,40.07 L52.28,39.97 L52.51,39.89 L52.79,39.81 L53.09,39.76 L53.42,39.72 L53.79,39.70 L54.18,39.70 L54.60,39.72 L55.06,39.77 L55.54,39.84 L56.04,39.94 L56.58,40.06 L57.14,40.21 L57.72,40.38 L58.32,40.59 L58.95,40.82 L59.60,41.08 L60.27,41.37 L60.95,41.69 L61.66,42.03 L62.39,42.41 L63.14,42.81 L63.90,43.24 L64.69,43.70 L65.49,44.18 L66.31,44.69 L67.15,45.23 L68.02,45.79 L68.90,46.38 L69.80,46.99 L70.74,47.63 L71.70,48.28 L72.70,48.95 L73.74,49.63 L74.86,50.31 L76.10,50.95 L77.37,51.63 L77.97,52.71 L78.58,53.82 L79.18,54.96 L79.78,56.11 L80.22,55.89 L79.62,54.72 L79.02,53.59 L78.41,52.47 L77.80,51.38 L77.85,49.94 L77.88,48.51 L77.77,47.17 L77.59,45.87 L77.37,44.62 L77.10,43.40 L76.80,42.21 L76.48,41.05 L76.13,39.91 L75.76,38.80 L75.36,37.71 L74.95,36.64 L74.52,35.60 L74.06,34.58 L73.59,33.59 L73.10,32.61 L72.60,31.66 L72.07,30.73 L71.52,29.82 L70.96,28.93 L70.38,28.06 L69.77,27.22 L69.15,26.39 L68.50,25.59 L67.83,24.81 L67.14,24.05 L66.43,23.32 L65.69,22.61 L64.93,21.93 L64.14,21.27 L63.33,20.65 L62.49,20.05 L61.62,19.48 L60.73,18.94 L59.81,18.44 L58.86,17.98 L57.88,17.55 L56.88,17.17 L55.85,16.83 L54.80,16.53 L53.73,16.28 L52.64,16.09 L51.53,15.95 L50.42,15.86 L49.29,15.82 L48.15,15.85 L47.02,15.93 L45.88,16.07 L44.76,16.26 L43.64,16.51 L42.54,16.82 L41.46,17.18 L40.39,17.59 L39.36,18.06 L38.35,18.58 L37.38,19.15 L36.45,19.78 L35.55,20.45 L34.69,21.15 L33.87,21.89 L33.08,22.66 L32.32,23.46 L31.60,24.28 L30.91,25.13 L30.25,26.00 L29.62,26.90 L29.02,27.81 L28.44,28.74 L27.90,29.69 L27.38,30.66 L26.89,31.65 L26.42,32.66 L25.98,33.68 L25.56,34.72 L25.16,35.78 L24.78,36.86 L24.43,37.95 L24.09,39.06 L23.78,40.19 L23.48,41.33 L23.21,42.49 L22.95,43.67 L22.72,44.87 L22.50,46.09 L22.30,47.32 L22.12,48.57 L21.95,49.84 L21.81,51.13 L21.68,52.44 L21.58,53.77 L21.49,55.11 L21.42,56.48 L21.37,57.86 L21.33,59.27 L21.32,60.69 L21.33,62.13 L21.36,63.59 L21.41,65.08 L21.48,66.58 L21.57,68.10 L21.69,69.64 L21.84,71.21 L22.01,72.79 L22.22,74.39 L22.46,76.02 L22.74,77.65Z\" fill=\"#7FF3D0\" opacity=\"0.13\"/><path d=\"M31.34,70.15 L31.56,68.89 L31.79,67.66 L32.02,66.45 L32.26,65.27 L32.51,64.10 L32.76,62.95 L33.02,61.83 L33.29,60.72 L33.56,59.64 L33.84,58.58 L34.12,57.54 L34.41,56.52 L34.71,55.52 L35.01,54.55 L35.32,53.59 L35.64,52.66 L35.96,51.75 L36.28,50.86 L36.61,49.99 L36.95,49.15 L37.29,48.32 L37.64,47.52 L37.99,46.74 L38.35,45.99 L38.70,45.25 L39.07,44.54 L39.44,43.85 L39.81,43.18 L40.18,42.54 L40.56,41.92 L40.94,41.32 L41.32,40.74 L41.71,40.19 L42.09,39.66 L42.48,39.15 L42.87,38.66 L43.26,38.20 L43.65,37.76 L44.04,37.34 L44.43,36.94 L44.82,36.57 L45.21,36.21 L45.60,35.88 L45.98,35.57 L46.37,35.28 L46.75,35.01 L47.13,34.76 L47.50,34.52 L47.87,34.30 L48.24,34.10 L48.61,33.91 L48.98,33.74 L49.35,33.59 L49.71,33.45 L50.08,33.32 L50.45,33.22 L50.82,33.12 L51.20,33.04 L51.57,32.98 L51.96,32.93 L52.34,32.90 L52.74,32.88 L53.14,32.88 L53.55,32.90 L53.96,32.93 L54.38,32.98 L54.81,33.05 L55.25,33.14 L55.70,33.24 L56.16,33.37 L56.62,33.51 L57.09,33.68 L57.58,33.87 L58.07,34.08 L58.56,34.32 L59.07,34.57 L59.58,34.85 L60.10,35.16 L60.62,35.48 L61.16,35.83 L61.70,36.21 L62.24,36.61 L62.79,37.03 L63.34,37.48 L63.90,37.96 L64.47,38.46 L65.04,38.98 L65.61,39.53 L66.19,40.10 L66.77,40.70 L67.35,41.32 L67.94,41.97 L68.53,42.65 L69.13,43.35 L69.73,44.07 L70.33,44.82 L70.94,45.59 L71.55,46.39 L72.17,47.21 L72.79,48.05 L73.43,48.92 L74.08,49.81 L74.76,50.70 L75.40,51.65 L75.93,52.68 L76.46,53.73 L76.98,54.81 L77.50,55.92 L78.03,57.05 L78.54,58.20 L79.46,57.80 L78.94,56.63 L78.41,55.49 L77.88,54.38 L77.35,53.29 L76.82,52.22 L76.28,51.19 L75.85,50.11 L75.46,49.04 L75.03,48.01 L74.58,47.00 L74.12,46.03 L73.65,45.08 L73.17,44.15 L72.68,43.25 L72.19,42.38 L71.69,41.53 L71.18,40.70 L70.67,39.90 L70.15,39.12 L69.63,38.36 L69.10,37.63 L68.57,36.92 L68.03,36.23 L67.49,35.57 L66.94,34.93 L66.39,34.31 L65.83,33.72 L65.27,33.15 L64.70,32.60 L64.13,32.08 L63.55,31.57 L62.97,31.09 L62.38,30.64 L61.79,30.21 L61.20,29.80 L60.59,29.41 L59.98,29.05 L59.37,28.72 L58.75,28.41 L58.13,28.12 L57.50,27.86 L56.87,27.63 L56.23,27.42 L55.59,27.24 L54.94,27.09 L54.29,26.97 L53.64,26.87 L52.98,26.81 L52.33,26.77 L51.67,26.76 L51.02,26.79 L50.36,26.84 L49.71,26.92 L49.06,27.03 L48.42,27.18 L47.78,27.35 L47.15,27.55 L46.53,27.78 L45.91,28.03 L45.30,28.32 L44.70,28.63 L44.12,28.97 L43.54,29.34 L42.98,29.74 L42.43,30.16 L41.89,30.61 L41.36,31.07 L40.85,31.56 L40.34,32.08 L39.85,32.61 L39.36,33.16 L38.89,33.74 L38.43,34.34 L37.98,34.95 L37.54,35.59 L37.11,36.24 L36.69,36.92 L36.28,37.62 L35.88,38.33 L35.49,39.07 L35.11,39.82 L34.75,40.59 L34.39,41.38 L34.04,42.20 L33.70,43.03 L33.37,43.87 L33.05,44.74 L32.75,45.63 L32.45,46.54 L32.16,47.46 L31.88,48.40 L31.61,49.37 L31.35,50.35 L31.11,51.35 L30.87,52.36 L30.64,53.40 L30.43,54.46 L30.22,55.53 L30.03,56.62 L29.84,57.74 L29.67,58.87 L29.51,60.01 L29.36,61.18 L29.22,62.36 L29.10,63.57 L28.98,64.79 L28.88,66.03 L28.80,67.29 L28.72,68.56 L28.66,69.85Z\" fill=\"#9CF6DC\" opacity=\"0.40\"/><path d=\"M29.00,78.32 L29.39,76.79 L29.78,75.30 L30.16,73.83 L30.54,72.40 L30.92,70.99 L31.31,69.61 L31.69,68.25 L32.08,66.93 L32.47,65.63 L32.86,64.36 L33.25,63.12 L33.65,61.91 L34.05,60.73 L34.45,59.58 L34.85,58.45 L35.26,57.35 L35.67,56.28 L36.09,55.24 L36.50,54.23 L36.92,53.25 L37.34,52.30 L37.76,51.37 L38.19,50.48 L38.61,49.62 L39.04,48.78 L39.46,47.97 L39.89,47.20 L40.32,46.45 L40.74,45.73 L41.17,45.04 L41.59,44.39 L42.01,43.76 L42.43,43.16 L42.85,42.59 L43.26,42.05 L43.67,41.54 L44.07,41.06 L44.47,40.61 L44.86,40.19 L45.24,39.79 L45.62,39.43 L45.98,39.09 L46.34,38.77 L46.69,38.49 L47.02,38.23 L47.35,37.99 L47.66,37.77 L47.96,37.57 L48.25,37.40 L48.52,37.24 L48.78,37.08 L49.02,36.94 L49.26,36.81 L49.48,36.68 L49.70,36.57 L49.91,36.47 L50.12,36.37 L50.33,36.28 L50.55,36.19 L50.76,36.11 L50.98,36.04 L51.21,35.98 L51.45,35.92 L51.70,35.87 L51.96,35.83 L52.24,35.79 L52.54,35.77 L52.85,35.76 L53.18,35.77 L53.53,35.79 L53.90,35.83 L54.28,35.88 L54.69,35.96 L55.11,36.05 L55.56,36.17 L56.02,36.30 L56.50,36.46 L56.99,36.65 L57.50,36.86 L58.03,37.09 L58.57,37.35 L59.13,37.64 L59.70,37.95 L60.29,38.29 L60.89,38.66 L61.50,39.05 L62.12,39.47 L62.75,39.91 L63.40,40.39 L64.05,40.89 L64.72,41.41 L65.40,41.97 L66.08,42.55 L66.78,43.15 L67.49,43.79 L68.20,44.45 L68.93,45.13 L69.67,45.84 L70.42,46.57 L71.18,47.33 L71.96,48.11 L72.76,48.91 L73.58,49.73 L74.43,50.56 L75.35,51.39 L76.28,52.25 L76.88,53.32 L77.47,54.41 L78.07,55.54 L78.67,56.69 L81.33,55.31 L80.73,54.14 L80.12,52.99 L79.51,51.87 L78.89,50.77 L78.60,49.50 L78.31,48.26 L77.94,47.06 L77.53,45.91 L77.10,44.79 L76.66,43.69 L76.19,42.63 L75.71,41.59 L75.21,40.57 L74.71,39.58 L74.19,38.61 L73.66,37.67 L73.12,36.75 L72.57,35.86 L72.01,34.98 L71.44,34.13 L70.86,33.31 L70.27,32.50 L69.67,31.72 L69.06,30.96 L68.44,30.23 L67.80,29.51 L67.16,28.83 L66.50,28.16 L65.84,27.52 L65.16,26.90 L64.46,26.30 L63.76,25.73 L63.04,25.19 L62.31,24.67 L61.56,24.18 L60.80,23.72 L60.02,23.28 L59.23,22.88 L58.43,22.50 L57.61,22.16 L56.77,21.85 L55.92,21.57 L55.06,21.34 L54.19,21.13 L53.31,20.97 L52.41,20.85 L51.51,20.77 L50.61,20.73 L49.70,20.74 L48.79,20.78 L47.88,20.88 L46.97,21.01 L46.07,21.19 L45.18,21.41 L44.30,21.68 L43.43,21.99 L42.58,22.33 L41.74,22.72 L40.92,23.15 L40.13,23.62 L39.36,24.13 L38.61,24.67 L37.89,25.25 L37.18,25.85 L36.50,26.49 L35.84,27.14 L35.20,27.83 L34.59,28.54 L33.99,29.27 L33.41,30.03 L32.85,30.81 L32.31,31.61 L31.79,32.43 L31.29,33.27 L30.80,34.14 L30.33,35.02 L29.87,35.93 L29.44,36.85 L29.01,37.80 L28.60,38.77 L28.21,39.75 L27.83,40.76 L27.47,41.79 L27.12,42.84 L26.78,43.91 L26.46,45.00 L26.15,46.12 L25.85,47.25 L25.57,48.40 L25.30,49.58 L25.05,50.78 L24.81,52.00 L24.58,53.24 L24.36,54.50 L24.16,55.78 L23.98,57.09 L23.80,58.41 L23.65,59.76 L23.50,61.13 L23.37,62.53 L23.26,63.94 L23.16,65.38 L23.07,66.84 L23.01,68.32 L22.96,69.83 L22.92,71.35 L22.91,72.90 L22.92,74.48 L22.95,76.07 L23.00,77.68Z\" fill=\"url(#mint)\"/><circle cx=\"80.0\" cy=\"32.0\" r=\"9.68\" fill=\"#FFFFFF\" opacity=\"0.16\"/><path d=\"M80.00,27.60Q80.70,31.30 84.40,32.00Q80.70,32.70 80.00,36.40Q79.30,32.70 75.60,32.00Q79.30,31.30 80.00,27.60Z\" fill=\"#FFFFFF\"/></g>", "desc": "一条从左下扫上去、再向右下落的弧光，两端收尖、中间最厚；外面套一层同轴、极宽的淡光当晕，上方一道 40% 的伴带给纵深，右上角一颗四角星。深青夜空底，主光是青 → 薄荷 → 近白的三段渐变。"}, "globe": {"name": "重铸地球", "body": "<rect width=\"108\" height=\"108\" fill=\"url(#g-bg)\"/><circle cx=\"54\" cy=\"54\" r=\"30\" fill=\"url(#g-ball)\"/><g clip-path=\"url(#g-clip)\" fill=\"none\" stroke=\"#0F5C4A\" stroke-width=\"6\"><ellipse cx=\"54\" cy=\"54\" rx=\"13\" ry=\"30\"/><ellipse cx=\"54\" cy=\"54\" rx=\"30\" ry=\"9\"/></g><circle cx=\"43\" cy=\"43\" r=\"7\" fill=\"#FFFFFF\" opacity=\"0.22\"/>", "desc": "实心球 + 6dp 经纬线 + 左上高光。稳妥、一眼是浏览器，但品类里撞色撞形。"}, "spark": {"name": "北极星", "body": "<rect width=\"108\" height=\"108\" fill=\"url(#p-bg)\"/><path fill=\"url(#p-mark)\" d=\"M54,24 Q59,49 84,54 Q59,59 54,84 Q49,59 24,54 Q49,49 54,24 Z\"/><path fill=\"url(#p-mark)\" opacity=\"0.42\" d=\"M72,66 Q73,71 78,72 Q73,73 72,78 Q71,73 66,72 Q71,71 72,66 Z\"/>", "desc": "纸白底上一颗绿色四角星。干净，但白底在浅色壁纸上会融掉。"}, "diamond": {"name": "门径", "body": "<rect width=\"108\" height=\"108\" fill=\"url(#d-bg)\"/><g transform=\"rotate(45 54 54)\"><rect x=\"33\" y=\"33\" width=\"42\" height=\"42\" rx=\"10\" fill=\"url(#d-mark)\"/><rect x=\"42.5\" y=\"42.5\" width=\"23\" height=\"23\" rx=\"6\" fill=\"#FBF9F6\"/></g>", "desc": "纸白底上同心圆角菱形。对称、和所有圆形浏览器图标都不撞，但读不出是浏览器。"}};
+const ORDER = ['aurora', 'globe', 'spark', 'diamond'];
+const SIZES = [144, 96, 64, 48, 32];
+
+function svg(body, size) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 108 108">${body}</svg>`;
+}
+
+function render(key) {
+  const c = CANDIDATES[key];
+  const cells = SIZES.map(s =>
+    `<div class="cell"><div class="mask">${svg(c.body, s)}</div><span>${s}px</span></div>`
+  ).join('') + `<div class="cell"><div class="squircle">${svg(c.body, 96)}</div><span>圆角方形</span></div>`;
+
+  document.getElementById('row-light').innerHTML = cells;
+  document.getElementById('row-dark').innerHTML = cells;
+  document.getElementById('row-bare').innerHTML =
+    `<div class="cell"><div class="bare">${svg(c.body, 168)}</div><span>108dp 画布</span></div>` +
+    `<div class="cell"><div class="bare">${svg(c.body + SAFE, 150)}</div><span>+ 安全圈</span></div>`;
+  document.getElementById('desc').textContent = c.desc;
+  document.querySelectorAll('#swap button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.key === key)));
+  location.hash = 'icon=' + key;
+}
+
+const SAFE = '<circle cx="54" cy="54" r="33" fill="none" stroke="#E11D48" stroke-width="0.6" stroke-dasharray="3 3"/>';
+
+document.getElementById('swap').innerHTML = ORDER.map((k, i) =>
+  `<button data-key="${k}">${i + 1} · ${CANDIDATES[k].name}</button>`).join('');
+document.getElementById('swap').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) render(b.dataset.key);
+});
+
+const KEYS = {'1': 'aurora', '2': 'globe', '3': 'spark', '4': 'diamond'};
+document.addEventListener('keydown', e => { if (KEYS[e.key]) render(KEYS[e.key]); });
+
+const fromHash = (location.hash.match(/icon=([a-z]+)/) || [])[1];
+render(CANDIDATES[fromHash] ? fromHash : 'aurora');
+</script>
+</body>
+</html>

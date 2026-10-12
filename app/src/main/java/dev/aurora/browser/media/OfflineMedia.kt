@@ -146,8 +146,15 @@ object OfflineMedia {
             context,
             RefererFallbackDataSource.Factory(httpFactory()) { referer },
         )
+        // 缓存建不起来就退成**纯网络播放**，而不是把异常一路冒到播放器初始化里。
+        //
+        // `SimpleCache` 要独占目录和锁文件，构造时可能抛 `IllegalStateException`：上一次
+        // 下到一半被系统杀进程、索引库损坏、存储写满，都会命中。这些都是「有时候才发生」，
+        // 正好对上用户报的「有时候播放视频会崩溃」——而且它崩在 onCreate，看起来就是
+        // 「一进播放器就闪退」，与视频本身无关，最难排查。缓存只是加分项：没有它照样能在线看。
+        val simpleCache = runCatching { cache(context) }.getOrNull() ?: return upstream
         return CacheDataSource.Factory()
-            .setCache(cache(context))
+            .setCache(simpleCache)
             .setUpstreamDataSourceFactory(upstream)
             // **只读**：命中缓存就离线播，没命中就走网络、不往缓存里写。
             //

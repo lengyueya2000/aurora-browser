@@ -99,7 +99,20 @@ class BrowserViewModel(
             buildSuggestions(q, engine, marks, hist)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    fun openOmnibox() { _surface.value = BrowserSurface.Omnibox }
+    /**
+     * 打开地址栏输入层。
+     *
+     * [seed] 是预填进输入框的内容。从网页态点地址栏进来时带上当前网址：用户可以就地改域名、
+     * 改参数再回车，而不是先面对一个空框、还得把地址重打一遍。主页搜索框进来时不传，
+     * 保持空白。
+     *
+     * 先写 `_query` 再切 surface：两处状态各自订阅，反过来写会让输入层有一帧是空的。
+     */
+    fun openOmnibox(seed: String? = null) {
+        _query.value = seed.orEmpty()
+        _surface.value = BrowserSurface.Omnibox
+    }
+
     fun closeOmnibox() { _surface.value = BrowserSurface.Page; _query.value = "" }
     fun setQuery(q: String) { _query.value = q }
 

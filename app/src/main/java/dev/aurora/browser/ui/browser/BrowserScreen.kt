@@ -508,23 +508,20 @@ fun BrowserScreen(
                             )
                         }
                     }
-                    // 网页态的地址栏：显示域名 + 站点身份；点击回到输入态。
+                    // 网页态的地址栏：显示域名 + 站点身份；点击进输入态。
                     // 加载中右侧按钮变「停止加载」（规格 5.3）。
                     val loading = progress in 1..99
                     OmniboxBar(
                         displayUrl = hostOf(active.url),
                         security = securityOf(active.url, sslWarning = sslWarning),
-                        onTap = {
-                            // 顺手把当前网址放进剪贴板：网页里没有「复制链接」的入口，
-                            // 想分享到别处只能自己一个字符一个字符去选。
-                            val url = active.url
-                            if (!url.isNullOrBlank()) {
-                                vm.showMessage(
-                                    if (UrlClipboard.copy(context, url)) "已复制当前网址" else "复制失败",
-                                )
-                            }
-                            vm.openOmnibox()
-                        },
+                        // 点一下进输入态，并把当前网址预填进输入框（整段选中）：用户要的是
+                        // 「自由编辑网址」，不是「点一下就被复制」——真机反馈原话是
+                        // 「点击输入框，可以自由编辑网址，而不是默认复制」。
+                        //
+                        // 复制这条路没有丢：预填 + 全选之后，系统自带的选区菜单里就有复制，
+                        // 而且是用户主动选、主动点的，比替他把剪贴板冲掉更合适
+                        // （剪贴板里可能正放着他要粘的东西）。
+                        onTap = { vm.openOmnibox(active.url) },
                         trailingIcon = if (loading) AuroraIcons.Close else AuroraIcons.Refresh,
                         onTrailingAction = {
                             if (loading) controller.stopLoading() else controller.reload()

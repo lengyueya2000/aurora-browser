@@ -287,29 +287,43 @@ class PlayerActivity : ComponentActivity() {
         val selector = DefaultTrackSelector(this)
         trackSelector = selector
 
-        val exo = ExoPlayer.Builder(this)
-            // 硬解初始化失败的机器（vivo / OPPO / 部分联发科）自动回退软解，
-            // 而不是直接报错退出。这是「有些视频播不了」最常见的成因。
-            .setRenderersFactory(DefaultRenderersFactory(this).setEnableDecoderFallback(true))
-            .setTrackSelector(selector)
-            // 音频焦点：Media3 只有在显式设了 `handleAudioFocus = true` 时才会去申请焦点。
-            // 不设的话，来电、别的应用起播都不会让本播放器暂停或 duck，拔耳机也没有回调——
-            // 用户听到的就是两路声音叠在一起。用法/内容类型声明成媒体，才能被系统正确路由。
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                    .build(),
-                /* handleAudioFocus = */ true,
-            )
-            // 默认缓冲在弱网下太浅，一卡就重新缓冲。放宽到 20 秒起播、60 秒上限，
-            // 并把「起播前最少缓冲」抬到 2.5 秒——起播慢一点，换卡顿少很多。
-            .setLoadControl(
-                DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(20_000, 60_000, 2_500, 5_000)
-                    .build(),
-            )
-            .build()
+        // 建播放器本身包一层：解码器、音频属性、系统组件任何一处抛异常，以前都会直接
+        // 冒到主线程把整个应用带走。用户报的「有时候播放视频会崩溃」里，凡是崩在
+        // 「一进播放器就退」这个形状的，都落在这里。改成说清楚再退出：用户看到的是
+        // 「这个视频播不了」，而且能截个图告诉我原因。
+        val exo = runCatching {
+            ExoPlayer.Builder(this)
+                // 硬解初始化失败的机器（vivo / OPPO / 部分联发科）自动回退软解，
+                // 而不是直接报错退出。这是「有些视频播不了」最常见的成因。
+                .setRenderersFactory(DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+                .setTrackSelector(selector)
+                // 音频焦点：Media3 只有在显式设了 `handleAudioFocus = true` 时才会去申请焦点。
+                // 不设的话，来电、别的应用起播都不会让本播放器暂停或 duck，拔耳机也没有回调——
+                // 用户听到的就是两路声音叠在一起。用法/内容类型声明成媒体，才能被系统正确路由。
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                        .build(),
+                    /* handleAudioFocus = */ true,
+                )
+                // 默认缓冲在弱网下太浅，一卡就重新缓冲。放宽到 20 秒起播、60 秒上限，
+                // 并把「起播前最少缓冲」抬到 2.5 秒——起播慢一点，换卡顿少很多。
+                .setLoadControl(
+                    DefaultLoadControl.Builder()
+                        .setBufferDurationsMs(20_000, 60_000, 2_500, 5_000)
+                        .build(),
+                )
+                .build()
+        }.getOrElse { error ->
+            Toast.makeText(
+                this,
+                "播放器初始化失败：${error.message ?: error.javaClass.simpleName}",
+                Toast.LENGTH_LONG,
+            ).show()
+            finish()
+            return
+        }
         player = exo
 
         val dataSourceFactory = OfflineMedia.playbackDataSource(this, referer)
@@ -333,6 +347,7 @@ class PlayerActivity : ComponentActivity() {
             AuroraTheme(mode = mode) {
                 PlayerScreen(
                     player = exo,
+                    isDestroyed = { destroyed },
                     // 标题由选集状态算出来：切集之后要变成「剧名 · 第 2 集」，所以读的是
                     // episodePlay 这个状态，而不是一个算好的字符串。
                     title = episodePlay.value.title(mediaTitle),
@@ -558,11 +573,16 @@ class PlayerActivity : ComponentActivity() {
         sourceRetried = false
         // 清晰度选择与倍速不动（那是用户偏好），只有进度回到新一集自己的位置。
         val resumeMs = prefs?.resumeMs(url) ?: 0L
-        exo.stop()
-        exo.setMediaSource(buildMediaSource(url, sourceAsHls, factory))
-        exo.prepare()
-        if (resumeMs > 0L) exo.seekTo(resumeMs)
-        exo.playWhenReady = true
+        // 换源这三步（stop / setMediaSource / prepare）在播放器已经出错、或正在被释放时会抛
+        // IllegalStateException。这里是在切集流程里调用的，抛出去没人接，就是一次闪退。
+        // 失败就保持原样：用户看到的是「这一集没切过去」，而不是应用退出。
+        runCatching {
+            exo.stop()
+            exo.setMediaSource(buildMediaSource(url, sourceAsHls, factory))
+            exo.prepare()
+            if (resumeMs > 0L) exo.seekTo(resumeMs)
+            exo.playWhenReady = true
+        }
     }
 
     /** 竖屏短剧掰成横屏同样是错的，所以等真实宽高出来再定方向，而且只定一次。 */
@@ -617,12 +637,15 @@ class PlayerActivity : ComponentActivity() {
 
         val resumeMs = exo.currentPosition.coerceAtLeast(0L)
         // 换源要先停：setMediaSource 只在空闲态才允许，而失败后的播放器还挂在旧源上。
-        exo.stop()
-        exo.setMediaSource(buildMediaSource(mediaUrl, sourceAsHls, factory))
-        exo.prepare()
-        if (resumeMs > 0L) exo.seekTo(resumeMs)
-        exo.playWhenReady = true
-        return true
+        // 这几步本身也可能失败（播放器已释放、状态不对），失败就当没救回来——
+        // 让调用方走「说清楚原因再退出」那条路，而不是把异常抛回播放器的回调里。
+        return runCatching {
+            exo.stop()
+            exo.setMediaSource(buildMediaSource(mediaUrl, sourceAsHls, factory))
+            exo.prepare()
+            if (resumeMs > 0L) exo.seekTo(resumeMs)
+            exo.playWhenReady = true
+        }.isSuccess
     }
 
     /**
@@ -925,6 +948,7 @@ private val BOTTOM_CHIPS_CLEARANCE = 60.dp
 @Composable
 private fun PlayerScreen(
     player: ExoPlayer,
+    isDestroyed: () -> Boolean,
     title: String,
     episodes: EpisodePlayback,
     watchedEpisodes: Set<Int>,
@@ -954,6 +978,20 @@ private fun PlayerScreen(
 ) {
     var playing by remember { mutableStateOf(player.isPlaying) }
     var buffering by remember { mutableStateOf(false) }
+
+    /**
+     * 用户是不是想让它在放（`playWhenReady`）。
+     *
+     * 只看 `playing` 分不出「在缓冲」和「用户暂停了」——两种情况下 `isPlaying` 都是 false。
+     * 中间那颗按钮要按这个区分：缓冲中该画转圈，暂停了才该画播放三角。
+     *
+     * 真机反馈原话：「全屏之后直接自动播放视频，如果缓冲慢，显示转圈，而不是显示播放按钮，
+     * 这样会造成误解」——缓冲慢的时候画着播放三角，用户以为没自动播，于是又去点一下。
+     */
+    var wantsPlay by remember { mutableStateOf(player.playWhenReady) }
+
+    /** 缓冲中且用户是想播的：中间画转圈。暂停时缓冲（少见）仍然画播放三角，点了能继续。 */
+    val loading = PlayerGestures.showsSpinner(buffering, wantsPlay)
     var positionMs by remember { mutableLongStateOf(player.currentPosition) }
     var durationMs by remember { mutableLongStateOf(player.duration.coerceAtLeast(0L)) }
     var controlsVisible by remember { mutableStateOf(true) }
@@ -990,6 +1028,10 @@ private fun PlayerScreen(
                 playing = isPlaying
             }
 
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                wantsPlay = playWhenReady
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 buffering = playbackState == Player.STATE_BUFFERING
                 if (playbackState == Player.STATE_READY) {
@@ -1020,8 +1062,13 @@ private fun PlayerScreen(
     }
 
     // 进度轮询。200ms 足够让进度条看起来是连续的，又不至于每帧都重组。
+    //
+    // `isDestroyed` 为真就停：`onDestroy` 里已经 release 过播放器，而组合要等窗口真正从
+    // 窗口管理器摘除才销毁（那发生在 onDestroy 返回之后），中间这段空档里再去读一个
+    // 已释放的播放器没有任何意义。用 lambda 而不是 Boolean 参数：参数是组合那一刻的快照，
+    // 永远读不到后来的变化。
     LaunchedEffect(player) {
-        while (true) {
+        while (!isDestroyed()) {
             if (!scrubbing) positionMs = player.currentPosition
             if (durationMs <= 0L) durationMs = player.duration.coerceAtLeast(0L)
             delay(200)
@@ -1101,7 +1148,10 @@ private fun PlayerScreen(
             )
         }
 
-        if (buffering && !pip && switchingLabel == null) {
+        // 控制层收起时的缓冲指示：这时中间那颗按钮也一起收起来了，得另给一个。
+        // 控制层可见时不画这个——那一层里已经有一个（见 PlayerControls 的中间位），
+        // 两个同心转圈叠在一起只会看起来更糊。
+        if (loading && !pip && switchingLabel == null && !controlsVisible) {
             CircularProgressIndicator(
                 color = OnVideoColors.brand,
                 modifier = Modifier
@@ -1163,6 +1213,7 @@ private fun PlayerScreen(
                 episodes = episodes,
                 onOpenEpisodes = onOpenEpisodes,
                 playing = playing,
+                loading = loading,
                 positionMs = if (scrubbing) scrubMs else positionMs,
                 durationMs = durationMs,
                 speed = speed,
@@ -1215,17 +1266,26 @@ private fun PlayerScreen(
             )
         }
 
-        // 下载状态独立于控制层：控制层几秒后会自动收起（还会带一层压暗画面的遮罩），
-        // 而「下得怎么样、快不快」是用户主动点出来的东西，不该跟着一起消失——跟着消失
-        // 的话，点完下载等三秒就再也看不见速度了。位置抬到控制层那排胶囊之上，两者
-        // 同时出现时不打架。
+        // 下载状态跟着控制层一起出现、一起收起。
+        //
+        // 之前它常驻在画面上（当时的理由是「点完下载等三秒就看不见速度了」），但代价是
+        // 画面左下角永远挂着一条字，看剧的时候一直在那儿。用户要求改成「点一下才显示」：
+        // 想知道下得怎么样、快不快，点一下画面即可，和其余控制项是同一套心智。
+        //
+        // 位置仍抬到控制层那排胶囊之上（BOTTOM_CHIPS_CLEARANCE），两者同时出现时不打架。
         download?.let { status ->
-            if (!pip) {
+            AnimatedVisibility(
+                visible = controlsVisible && !pip,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.BottomStart),
+            ) {
                 DownloadStrip(
                     status = status,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = AuroraSpacing.m, bottom = BOTTOM_CHIPS_CLEARANCE),
+                    modifier = Modifier.padding(
+                        start = AuroraSpacing.m,
+                        bottom = BOTTOM_CHIPS_CLEARANCE,
+                    ),
                 )
             }
         }
@@ -1310,7 +1370,10 @@ private fun GestureLayer(
     onSeekCommit: (Long) -> Unit,
 ) {
     val context = LocalContext.current
-    val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    // 系统服务是可空的。以前这里写的是硬转换（`as AudioManager`），拿不到就抛
+    // TypeCastException——播放界面一进来就崩，而用户只会说「有时候播放视频会崩溃」。
+    // 拿不到就退成「音量手势不生效」，其余手势照常。
+    val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
     val activity = context as? Activity
 
     Box(
@@ -1325,8 +1388,8 @@ private fun GestureLayer(
                     val width = size.width
                     val height = size.height
                     val side = PlayerGestures.sideOf(startX, width)
-                    val maxVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                    val startVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    val maxVolume = audio?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 0
+                    val startVolume = audio?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
                     val startBrightness =
                         activity?.currentBrightness() ?: PlayerGestures.DEFAULT_BRIGHTNESS
                     val startPosition = player.currentPosition
@@ -1366,7 +1429,7 @@ private fun GestureLayer(
                                 onHint(GestureHint("亮度 ${(value * 100).toInt()}%"))
                             } else {
                                 val value = PlayerGestures.volume(startVolume, dy, height, maxVolume)
-                                audio.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
+                                audio?.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
                                 val percent = if (maxVolume > 0) value * 100 / maxVolume else 0
                                 onHint(GestureHint("音量 $percent%"))
                             }
@@ -1416,6 +1479,7 @@ private fun PlayerControls(
     episodes: EpisodePlayback,
     onOpenEpisodes: () -> Unit,
     playing: Boolean,
+    loading: Boolean,
     positionMs: Long,
     durationMs: Long,
     speed: Float,
@@ -1516,10 +1580,30 @@ private fun PlayerControls(
             Box(
                 Modifier
                     .size(64.dp)
-                    .clickable(onClick = onTogglePlay),
+                    .clickable(onClick = onTogglePlay)
+                    // 这一颗以前没有无障碍名字（里面是自绘的 Canvas）。顺带补上：
+                    // 读屏念不出「播放/暂停」的话，中间这块就是一块点不出所以然的空白。
+                    .semantics {
+                        contentDescription = when {
+                            loading -> "正在缓冲"
+                            playing -> "暂停"
+                            else -> "播放"
+                        }
+                    },
                 contentAlignment = Alignment.Center,
             ) {
-                PlayPauseGlyph(playing, colors.text, 34.dp)
+                // 缓冲中画转圈，不画播放三角：三角是「点了才放」的意思，而这里其实已经在
+                // 起播路上了，画出来只会让用户以为没自动播（见 PlayerScreen 里 loading 的注释）。
+                // 仍然可点：这时点一下是暂停（把 playWhenReady 关掉），下一帧就换回播放三角。
+                if (loading) {
+                    CircularProgressIndicator(
+                        color = colors.brand,
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(34.dp),
+                    )
+                } else {
+                    PlayPauseGlyph(playing, colors.text, 34.dp)
+                }
             }
             Spacer(Modifier.width(AuroraSpacing.l))
             TextTransportButton("+10s", "前进 10 秒", colors.text) {
@@ -2237,7 +2321,12 @@ private fun applyQuality(
     if (option == null) {
         builder.clearOverridesOfType(C.TRACK_TYPE_VIDEO)
     } else {
+        // 面板上的选项来自**上一次** onTracksChanged。自适应 HLS 在切档时会换掉轨道组，
+        // 这期间用户点了一下画质，旧下标就可能越过当前组的长度——而 TrackSelectionOverride
+        // 对越界是直接断言失败的（IllegalArgumentException），在主线程上就是一次硬崩。
+        // 越界就当这一下没点：画面继续按当前档位放，比整个应用退出好。
         val group = videoGroups.getOrNull(option.groupIndex) ?: return
+        if (option.trackIndex !in 0 until group.length) return
         builder.setOverrideForType(TrackSelectionOverride(group, option.trackIndex))
     }
     trackSelector.setParameters(builder)

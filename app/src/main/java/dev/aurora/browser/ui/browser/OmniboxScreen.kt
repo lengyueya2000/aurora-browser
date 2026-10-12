@@ -21,7 +21,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.aurora.browser.ui.components.auroraClickable
@@ -45,6 +47,19 @@ fun OmniboxScreen(
     val c = Aurora.colors
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+
+    // 输入框自己持有一份 TextFieldValue，而不是直接用传进来的 String。
+    //
+    // 两个原因：一是**整段选中**（TextRange(0, length)）——从网页态点地址栏进来时框里预填的
+    // 是当前网址，全选之后想换站直接打字就覆盖掉了，不用先长按拖一遍；二是选中状态要有地方存，
+    // 只传 String 的话每次重组选区都会被重置到末尾。
+    //
+    // 只在进入组合时初始化一次：本覆盖层随 surface 进出组合（BrowserScreen 的 when），
+    // 所以每次打开都是新的选区状态。不能写成 `remember(query)`——那样每敲一个字符都会
+    // 重建一次 value，选区被反复清掉。
+    var field by remember {
+        mutableStateOf(TextFieldValue(query, TextRange(0, query.length)))
+    }
 
     // Page/WebView 常驻在下方，本覆盖层必须吞掉空白区域的点击，否则会穿透到 WebView。
     // 不透明 background 只是绘制，不是命中测试边界——只有消费型指针修饰符才能挡住事件。
@@ -70,10 +85,13 @@ fun OmniboxScreen(
         ) {
             Icon(painterResource(AuroraIcons.Search), null, tint = c.brand, modifier = Modifier.size(18.dp))
             Box(modifier = Modifier.weight(1f)) {
-                if (query.isEmpty()) Text("搜索或输入网址", color = c.textDisabled)
+                if (field.text.isEmpty()) Text("搜索或输入网址", color = c.textDisabled)
                 BasicTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
+                    value = field,
+                    onValueChange = {
+                        field = it
+                        onQueryChange(it.text)
+                    },
                     singleLine = true,
                     textStyle = TextStyle(color = c.text),
                     cursorBrush = SolidColor(c.brand),
@@ -81,7 +99,7 @@ fun OmniboxScreen(
                         imeAction = androidx.compose.ui.text.input.ImeAction.Go,
                     ),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                        onGo = { if (query.isNotBlank()) onSubmit(query) },
+                        onGo = { if (field.text.isNotBlank()) onSubmit(field.text) },
                     ),
                     modifier = Modifier
                         .fillMaxWidth()

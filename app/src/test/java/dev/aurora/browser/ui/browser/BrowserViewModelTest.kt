@@ -36,6 +36,24 @@ class BrowserViewModelTest {
         assertThat(vm.activeTab.value.url).isEqualTo("https://a.com")
     }
 
+    /**
+     * 真机反馈：「打开一个网页后，点击输入框，可以自由编辑网址，而不是默认复制」。
+     *
+     * 编辑的前提是框里有东西可改，所以从网页态点地址栏进来时要预填当前网址；
+     * 从主页搜索框进来（不传 seed）仍然是一个空框，否则会先看到上一次的地址。
+     */
+    @Test fun openOmniboxSeedsTheQueryWhenGivenOne() {
+        val vm = vm()
+        vm.navigate("https://4kvm.net/play/ch4k8uf4p?ep=3")
+        vm.openOmnibox("https://4kvm.net/play/ch4k8uf4p?ep=3")
+        assertThat(vm.surface.value).isEqualTo(BrowserSurface.Omnibox)
+        assertThat(vm.query.value).isEqualTo("https://4kvm.net/play/ch4k8uf4p?ep=3")
+
+        vm.closeOmnibox()
+        vm.openOmnibox()
+        assertThat(vm.query.value).isEmpty()
+    }
+
     @Test fun newTabGoesToBlankPageNotOmnibox() {
         val vm = vm()
         vm.newTab()

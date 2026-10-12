@@ -40,6 +40,18 @@ internal object PlayerGestures {
     fun sideOf(x: Float, width: Int): Side =
         if (width <= 0 || x < width * SPLIT_RATIO) Side.LEFT else Side.RIGHT
 
+    /**
+     * 画面中间那颗按钮该画转圈还是画播放/暂停三角。
+     *
+     * 只看 `isPlaying` 分不出「在缓冲」和「用户暂停了」——两种情况下它都是 false。
+     * 真机反馈：「全屏之后直接自动播放视频，如果缓冲慢，显示转圈，而不是显示播放按钮，
+     * 这样会造成误解」——缓冲时画着播放三角，用户以为没自动播，又去点一下。
+     *
+     * 所以判据是「在缓冲」且「用户是想播的」（`playWhenReady`）。暂停状态下偶尔出现的
+     * 缓冲仍然画三角：那时点一下正是「继续播放」，是用户期待的结果。
+     */
+    fun showsSpinner(buffering: Boolean, playWhenReady: Boolean): Boolean = buffering && playWhenReady
+
     fun axisOf(dx: Float, dy: Float): Axis {
         if (abs(dx) < AXIS_SLOP && abs(dy) < AXIS_SLOP) return Axis.UNDECIDED
         return if (abs(dx) >= abs(dy)) Axis.HORIZONTAL else Axis.VERTICAL

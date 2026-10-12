@@ -166,4 +166,19 @@ class PlayerGesturesTest {
         assertThat(PlayerGestures.speedLabel(2f)).isEqualTo("2.0x")
         assertThat(PlayerGestures.SPEEDS).contains(1f)
     }
+
+    // ---------- 缓冲时的中间按钮 ----------
+
+    /**
+     * 真机反馈：「全屏之后直接自动播放视频，如果缓冲慢，显示转圈，而不是显示播放按钮，
+     * 这样会造成误解」。
+     *
+     * 缓冲中且用户想播 → 转圈；暂停 → 三角（这时点一下正是「继续播放」，是用户期待的）。
+     */
+    @Test fun spinnerOnlyWhileBufferingTowardsPlayback() {
+        assertThat(PlayerGestures.showsSpinner(buffering = true, playWhenReady = true)).isTrue()
+        assertThat(PlayerGestures.showsSpinner(buffering = true, playWhenReady = false)).isFalse()
+        assertThat(PlayerGestures.showsSpinner(buffering = false, playWhenReady = true)).isFalse()
+        assertThat(PlayerGestures.showsSpinner(buffering = false, playWhenReady = false)).isFalse()
+    }
 }
