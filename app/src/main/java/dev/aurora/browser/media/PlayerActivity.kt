@@ -8,21 +8,26 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Rational
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,13 +36,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -56,11 +66,17 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -88,7 +104,10 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import dev.aurora.browser.ui.browser.DesktopMode
 import dev.aurora.browser.ui.cast.CastController
+import dev.aurora.browser.ui.components.AuroraBottomSheet
+import dev.aurora.browser.ui.components.SettingRow
 import dev.aurora.browser.ui.theme.Aurora
 import dev.aurora.browser.ui.theme.AuroraRadius
 import dev.aurora.browser.ui.theme.AuroraSpacing
@@ -140,6 +159,39 @@ class PlayerActivity : ComponentActivity() {
     /** 是否正处在小窗里。小窗里要把控制层与手势全部让开，否则会盖住系统的展开/关闭按钮。 */
     private val inPip = mutableStateOf(false)
 
+    // ── 追剧模式（见 `docs/superpowers/specs/2026-10-11-binge-mode-design.md`）──
+
+    /**
+     * 这一集所在的剧。单集视频是 [EpisodePlayback.Single]，此时选集面板打不开、播完停在结尾
+     * ——与 1.13 完全一致。
+     *
+     * 用 Compose 状态而不是普通字段：标题行要跟着切集变，`setContent` 里的读取要能触发重组。
+     */
+    private val episodePlay = mutableStateOf(EpisodePlayback.Single)
+
+    /** 已看的集号。来自 [PlaybackPreferences]；无痕播放时不读也不写。 */
+    private val watchedEpisodes = mutableStateOf(emptySet<Int>())
+
+    /** 选集面板开着没有。面板在控制层之外，所以状态放在这里。 */
+    private val episodeSheetOpen = mutableStateOf(false)
+
+    /** 切集进行中要显示的那一集（「第 2 集」）；`null` 表示没在切。 */
+    private val switchingLabel = mutableStateOf<String?>(null)
+
+    /** 片尾卡片；`null` 表示不显示。 */
+    private val endCard = mutableStateOf<EndCard?>(null)
+
+    /** 切集用的隐藏嗅探窗口。同一时刻只存在一个，用完立刻销毁（一个 WebView 二三十 MB）。 */
+    private var sniffer: EpisodeSniffer? = null
+
+    private var endCardTicker: Runnable? = null
+    private var incognito = false
+
+    /** 当前是不是「请求桌面版网站」。切集时嗅探窗口要用同一个 UA，否则站点给另一套页面。 */
+    private var desktopMode = false
+
+    private val main = Handler(Looper.getMainLooper())
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val url = intent.getStringExtra(EXTRA_URL)
@@ -152,14 +204,28 @@ class PlayerActivity : ComponentActivity() {
         val referer = intent.getStringExtra(EXTRA_REFERER)?.takeIf { it.isNotBlank() }
         mediaTitle = title.ifBlank { url }
         mediaReferer = referer
+        incognito = intent.getBooleanExtra(EXTRA_INCOGNITO, false)
+        desktopMode = intent.getBooleanExtra(EXTRA_DESKTOP, false)
         val preferences = PlaybackPreferences.create(this)
         prefs = preferences
+
+        // 选集随 Intent 走（页面侧提取的结果，见 BrowserScreen）。坏 JSON 当没有选集：
+        // 播放器宁可少一个面板，也不能因为一条坏数据起不来。
+        val episodeList = EpisodeCodec.fromJson(intent.getStringExtra(EXTRA_EPISODES))
+            ?.let { list ->
+                // Intent 里的下标优先——它是「页面上的当前集」。越界就当不在列表里（-1）。
+                val index = intent.getIntExtra(EXTRA_EPISODE_INDEX, list.currentIndex)
+                list.copy(currentIndex = if (index in list.episodes.indices) index else -1)
+            }
+        episodePlay.value = EpisodePlayback.of(episodeList, preferences.autoNext())
+        watchedEpisodes.value = watchedOf(episodePlay.value, preferences)
 
         // 先按横屏摆好：影视内容绝大多数是横的，而国内手机默认开着「方向锁定」，
         // 不主动掰就会一直竖着、视频缩在中间一条。拿到真实宽高后再按需要纠正。
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         savedCutoutMode = ImmersiveMode.enter(this, savedCutoutMode)
-        if (title.isNotBlank()) setTitle(title)
+        // 标题栏（任务切换器里那个）跟着选集走，所以放在 episodePlay 设好之后取。
+        if (title.isNotBlank()) setTitle(displayTitle())
 
         val selector = DefaultTrackSelector(this)
         trackSelector = selector
@@ -197,12 +263,36 @@ class PlayerActivity : ComponentActivity() {
             AuroraTheme {
                 PlayerScreen(
                     player = exo,
-                    title = mediaTitle,
+                    // 标题由选集状态算出来：切集之后要变成「剧名 · 第 2 集」，所以读的是
+                    // episodePlay 这个状态，而不是一个算好的字符串。
+                    title = episodePlay.value.title(mediaTitle),
+                    episodes = episodePlay.value,
+                    watchedEpisodes = watchedEpisodes.value,
+                    sheetOpen = episodeSheetOpen.value,
+                    switchingLabel = switchingLabel.value,
+                    endCard = endCard.value,
                     trackSelector = selector,
                     initialSpeed = preferences.speed(),
                     pip = inPip.value,
                     onSpeedChanged = { preferences.rememberSpeed(it) },
-                    onEnded = { preferences.forget(url) },
+                    onEnded = { onEpisodeEnded() },
+                    onOpenEpisodes = { episodeSheetOpen.value = true },
+                    onCloseEpisodes = { episodeSheetOpen.value = false },
+                    onAutoNextChanged = { enabled ->
+                        episodePlay.value = episodePlay.value.withAutoNext(enabled)
+                        preferences.rememberAutoNext(enabled)
+                    },
+                    onPickEpisode = { index ->
+                        episodeSheetOpen.value = false
+                        switchTo(index)
+                    },
+                    onPlayNextNow = {
+                        endCard.value?.nextIndex?.let { next ->
+                            cancelEndCard()
+                            switchTo(next)
+                        }
+                    },
+                    onCancelEndCard = { cancelEndCard() },
                     onPip = { hint -> enterPip(hint) },
                     onCast = { castVideo() },
                     onDownload = { downloadVideo() },
@@ -221,6 +311,187 @@ class PlayerActivity : ComponentActivity() {
             }
         }
         exo.prepare()
+    }
+
+    // ── 追剧模式：片尾、切集 ────────────────────────────────────
+
+    /**
+     * 一集播完了。
+     *
+     * 已有的行为（1.13）：把这一集的进度从「继续观看」里删掉——看完的不该留在待续列表里，
+     * 否则一季看完会堆一串已经看完的集。顺带记一笔「已看」，供选集面板标状态。
+     */
+    private fun onEpisodeEnded() {
+        prefs?.forget(mediaUrl)
+        markWatched()
+        val play = episodePlay.value
+        val next = play.nextIndex
+        if (next == null) {
+            // 单集视频：什么都不做，与 1.13 一致。有选集却没有下一集 = 已经是最后一集，
+            // 用户此刻正期待「自动播」却没发生，得给个说法（规格 6.3）。
+            if (play.hasEpisodes) {
+                showEndCard(EndCard(nextIndex = null, secondsLeft = 0, label = "已经是最后一集"), 1_500L)
+            }
+            return
+        }
+        // 开关关掉时停在结尾、控制层已经显示出来（见 PlayerScreen 的 onPlaybackStateChanged），
+        // 由用户自己决定——这也与 1.13 一致。
+        if (!play.autoNext) return
+        val episode = play.episode(next)
+        showEndCard(
+            EndCard(
+                nextIndex = next,
+                secondsLeft = AutoNextSeconds,
+                label = "下一集 · " + (episode?.let { play.episodeLabel(it) } ?: "下一集"),
+            ),
+            dismissAfterMs = null,
+        )
+        tickDown(next)
+    }
+
+    /**
+     * 记下「这一集看完了」。
+     *
+     * 无痕播放不记：与「无痕不记历史」同一个口径。集号取不到（站点没写数字）时不记——
+     * 用一个猜出来的集号标记，后果是标错集，比不标更糟。
+     */
+    private fun markWatched() {
+        if (incognito) return
+        val play = episodePlay.value
+        val ep = play.episode(play.index) ?: return
+        val number = play.number(ep) ?: return
+        val key = seriesKey(play) ?: return
+        prefs?.markWatched(key, number)
+        watchedEpisodes.value = watchedEpisodes.value + number
+    }
+
+    /** 一部剧在偏好里的键：`host|剧名`。同一部剧的各集在同一个站上，所以这个键跨集稳定。 */
+    private fun seriesKey(play: EpisodePlayback): String? {
+        val list = play.list ?: return null
+        val any = list.episodes.firstOrNull() ?: return null
+        return PlaybackPreferences.seriesKey(list.seriesTitle, any.url)
+    }
+
+    private fun watchedOf(play: EpisodePlayback, preferences: PlaybackPreferences): Set<Int> {
+        if (incognito) return emptySet()
+        val key = seriesKey(play) ?: return emptySet()
+        return preferences.watched(key)
+    }
+
+    private fun showEndCard(card: EndCard, dismissAfterMs: Long?) {
+        cancelEndCard()
+        endCard.value = card
+        if (dismissAfterMs != null) {
+            val runnable = Runnable {
+                endCardTicker = null
+                endCard.value = null
+            }
+            endCardTicker = runnable
+            main.postDelayed(runnable, dismissAfterMs)
+        }
+    }
+
+    /** 每秒减一，减到 0 就切集。 */
+    private fun tickDown(nextIndex: Int) {
+        val runnable = object : Runnable {
+            override fun run() {
+                val card = endCard.value ?: return
+                val left = card.secondsLeft - 1
+                if (left > 0) {
+                    endCard.value = card.copy(secondsLeft = left)
+                    main.postDelayed(this, 1_000L)
+                } else {
+                    endCardTicker = null
+                    endCard.value = null
+                    switchTo(nextIndex)
+                }
+            }
+        }
+        endCardTicker = runnable
+        main.postDelayed(runnable, 1_000L)
+    }
+
+    /** 取消倒计时：停在结尾，**不**自动重播（规格 6.3）。 */
+    private fun cancelEndCard() {
+        endCardTicker?.let { main.removeCallbacks(it) }
+        endCardTicker = null
+        endCard.value = null
+    }
+
+    /**
+     * 切到第 [index] 集。
+     *
+     * **进度不继承**：这里只带新一集的地址进播放链路，`EXTRA_START_MS` 那套不参与。
+     * 第 1 集看到 40 分钟播完、切到第 2 集直接从 40 分钟开始，就是这条没守住（规格 6.4）。
+     * 新一集的起始位置由它**自己**的续播记录决定：看过一半就接着看，没看过就从头。
+     */
+    private fun switchTo(index: Int) {
+        val play = episodePlay.value
+        val episode = play.episode(index) ?: return
+        cancelEndCard()
+        // 先把当前这一集的位置存下来：手动切走时它不是「播完」，该留在续播列表里。
+        // 已经播完的集不会被写进去——PlaybackPreferences.remember 会把结尾 30 秒内的一律丢掉。
+        rememberPosition()
+        switchingLabel.value = play.episodeLabel(episode)
+        sniffer?.cancel()
+        val probe = EpisodeSniffer(this)
+        sniffer = probe
+        probe.sniff(
+            pageUrl = episode.url,
+            host = findViewById(android.R.id.content),
+            // 桌面版站点给的是另一套 DOM，UA 不一致会嗅到对不上的地址。
+            userAgent = DesktopMode.userAgentFor(desktopMode, null),
+            onReady = { streamUrl -> onEpisodeStreamReady(index, episode.url, streamUrl) },
+            onFail = { reason -> onEpisodeStreamFailed(reason) },
+        )
+    }
+
+    private fun onEpisodeStreamReady(index: Int, pageUrl: String, streamUrl: String) {
+        switchingLabel.value = null
+        sniffer = null
+        val play = episodePlay.value
+        if (play.episode(index) == null) return
+        // 标题、Referer、进度全部按新一集重来。Referer 用**新一集的页面地址**：站点拿它校验
+        // 热链（见 RefererFallbackDataSource），用上一集的地址会被拒。
+        mediaUrl = streamUrl
+        mediaReferer = pageUrl
+        episodePlay.value = play.withIndex(index)
+        watchedEpisodes.value = prefs?.let { watchedOf(episodePlay.value, it) } ?: emptySet()
+        setTitle(displayTitle())
+        applyEpisodeSource(streamUrl, pageUrl)
+        // 标签跟着走：退出全屏时用户人在对的页面。不参与播放链路，失败也不影响播放。
+        EpisodeSession.tabSync.onEpisodeChanged(pageUrl)
+    }
+
+    private fun onEpisodeStreamFailed(reason: String) {
+        val label = switchingLabel.value ?: "这一集"
+        switchingLabel.value = null
+        sniffer = null
+        // 留在当前集：不退出播放器、不黑屏，当前这一集照常在放（规格 6.5）。
+        // 提示里既说清「怎么办」（回网页手动点一下），也留着底层原因——用户报障时那句
+        // 「等这一集的地址等超时了」比「失败了」有用得多。
+        Toast.makeText(
+            this,
+            "没能取到$label（$reason），可以回到网页手动点一下这一集",
+            Toast.LENGTH_LONG,
+        ).show()
+    }
+
+    /** 换一集的地址：重建数据源与媒体源，进度按新地址重新查。 */
+    private fun applyEpisodeSource(url: String, referer: String) {
+        val exo = player ?: return
+        val factory = OfflineMedia.playbackDataSource(this, referer)
+        dataSourceFactory = factory
+        sourceAsHls = MediaUrls.isHls(url)
+        // 换集是全新的一个源，上一次「换源重试」的额度要还回去。
+        sourceRetried = false
+        // 清晰度选择与倍速不动（那是用户偏好），只有进度回到新一集自己的位置。
+        val resumeMs = prefs?.resumeMs(url) ?: 0L
+        exo.stop()
+        exo.setMediaSource(buildMediaSource(url, sourceAsHls, factory))
+        exo.prepare()
+        if (resumeMs > 0L) exo.seekTo(resumeMs)
+        exo.playWhenReady = true
     }
 
     /** 竖屏短剧掰成横屏同样是错的，所以等真实宽高出来再定方向，而且只定一次。 */
@@ -381,6 +652,10 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         rememberPosition()
+        // 切集用的隐藏 WebView 必须显式销毁：一个二三十 MB，跟着 Activity 一起走。
+        sniffer?.destroy()
+        sniffer = null
+        cancelEndCard()
         player?.release()
         player = null
         ImmersiveMode.exit(this, savedCutoutMode)
@@ -390,21 +665,28 @@ class PlayerActivity : ComponentActivity() {
     private fun rememberPosition() {
         val exo = player ?: return
         // 标题与来源页一起存：主页的「继续观看」要显示是哪一集，重开时还要把 Referer
-        // 交回来（见 RefererFallbackDataSource）。
+        // 交回来（见 RefererFallbackDataSource）。标题带上集号，一季里才分得清哪条是哪集。
         prefs?.remember(
             url = mediaUrl,
             positionMs = exo.currentPosition,
             durationMs = exo.duration,
-            title = mediaTitle,
+            title = displayTitle(),
             referer = mediaReferer,
         )
     }
+
+    /** 界面上显示、也写进续播记录的标题。有选集时是「剧名 · 第 N 集」。 */
+    private fun displayTitle(): String = episodePlay.value.title(mediaTitle)
 
     companion object {
         private const val EXTRA_URL = "dev.aurora.browser.player.URL"
         private const val EXTRA_TITLE = "dev.aurora.browser.player.TITLE"
         private const val EXTRA_REFERER = "dev.aurora.browser.player.REFERER"
         private const val EXTRA_START_MS = "dev.aurora.browser.player.START_MS"
+        private const val EXTRA_EPISODES = "dev.aurora.browser.player.EPISODES"
+        private const val EXTRA_EPISODE_INDEX = "dev.aurora.browser.player.EPISODE_INDEX"
+        private const val EXTRA_INCOGNITO = "dev.aurora.browser.player.INCOGNITO"
+        private const val EXTRA_DESKTOP = "dev.aurora.browser.player.DESKTOP"
 
         /**
          * 打开内置播放器。
@@ -412,6 +694,11 @@ class PlayerActivity : ComponentActivity() {
          * @param url 已经解析好的可播地址（HLS 播放列表或直链），不是页面里的 `blob:`。
          * @param referer 页面地址：有的 CDN 会校验 Referer。
          * @param startPositionMs 从第几毫秒接着播；0 表示用上次记住的位置或从头。
+         * @param episodes 剧集 JSON（见 `EpisodeCodec.toJson`）；`null` 表示单集视频，
+         *   播放器里就没有选集面板，播完停在结尾——与 1.13 一致。
+         * @param episodeIndex 当前集下标；`-1` 表示当前页不在列表里。
+         * @param incognito 无痕来源：「已看」标记不落盘。
+         * @param desktopMode 当前是否「请求桌面版网站」；切集嗅探要用同一个 UA。
          */
         fun intent(
             context: Context,
@@ -419,14 +706,47 @@ class PlayerActivity : ComponentActivity() {
             title: String?,
             referer: String? = null,
             startPositionMs: Long = 0L,
+            episodes: String? = null,
+            episodeIndex: Int = -1,
+            incognito: Boolean = false,
+            desktopMode: Boolean = false,
         ): Intent =
             Intent(context, PlayerActivity::class.java)
                 .putExtra(EXTRA_URL, url)
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_REFERER, referer)
                 .putExtra(EXTRA_START_MS, startPositionMs)
+                .putExtra(EXTRA_EPISODES, episodes)
+                .putExtra(EXTRA_EPISODE_INDEX, episodeIndex)
+                .putExtra(EXTRA_INCOGNITO, incognito)
+                .putExtra(EXTRA_DESKTOP, desktopMode)
     }
 }
+
+/**
+ * 片尾卡片。两种形态合成一个状态：
+ *
+ * - 有下一集 → 倒计时（大号秒数 + 「立即播放 / 取消」两个按钮）；
+ * - 已经是最后一集 → 只有一句话，1.5 秒后自己消失。
+ *
+ * 没有选集时不弹卡片（与 1.13 一致）。
+ */
+private data class EndCard(
+    /** 下一集下标；`null` 表示已经是最后一集。 */
+    val nextIndex: Int?,
+    /** 还要等几秒自动播下一集。 */
+    val secondsLeft: Int,
+    /** 卡片上那行主文案。 */
+    val label: String,
+)
+
+/**
+ * 片尾倒计时的秒数。
+ *
+ * 3 秒是「来得及看清写了什么」和「不打断连看」之间的折中：再短用户没读完，
+ * 再长每一集之间都要干等。
+ */
+private const val AutoNextSeconds = 3
 
 /** 控制层里正在展开的二级面板。 */
 private enum class PlayerPanel { NONE, SPEED, QUALITY, RESIZE }
@@ -454,11 +774,22 @@ private const val MAX_ERROR_DETAIL = 120
 private fun PlayerScreen(
     player: ExoPlayer,
     title: String,
+    episodes: EpisodePlayback,
+    watchedEpisodes: Set<Int>,
+    sheetOpen: Boolean,
+    switchingLabel: String?,
+    endCard: EndCard?,
     trackSelector: DefaultTrackSelector,
     initialSpeed: Float,
     pip: Boolean,
     onSpeedChanged: (Float) -> Unit,
     onEnded: () -> Unit,
+    onOpenEpisodes: () -> Unit,
+    onCloseEpisodes: () -> Unit,
+    onAutoNextChanged: (Boolean) -> Unit,
+    onPickEpisode: (Int) -> Unit,
+    onPlayNextNow: () -> Unit,
+    onCancelEndCard: () -> Unit,
     /** 参数是画面在窗口里的位置：进小窗时交给系统当过渡动画的起点。拿不到时为 null。 */
     onPip: (android.graphics.Rect?) -> Unit,
     onCast: () -> Unit,
@@ -549,12 +880,20 @@ private fun PlayerScreen(
         }
     }
     // 控制层自动隐藏：正在播、面板没开、也没在拖进度时才收起来。
-    LaunchedEffect(controlsVisible, playing, panel, scrubbing) {
-        if (controlsVisible && playing && panel == PlayerPanel.NONE && !scrubbing) {
+    // 选集面板开着时也不收：标题行是面板的入口，收起来会让「点了标题打开面板」这件事
+    // 在面板关掉之后没有落点（面板只盖住下半屏，标题行还看得见）。
+    LaunchedEffect(controlsVisible, playing, panel, scrubbing, sheetOpen, endCard) {
+        if (controlsVisible && playing && panel == PlayerPanel.NONE && !scrubbing &&
+            !sheetOpen && endCard == null
+        ) {
             delay(3_500)
             controlsVisible = false
         }
     }
+
+    // 片尾倒计时期间按返回 = 取消（规格 6.3）。没有卡片时不接管返回键：
+    // 切集途中的返回该退出播放器（嗅探窗口由 onDestroy 销毁）。
+    BackHandler(enabled = endCard != null) { onCancelEndCard() }
 
     Box(
         Modifier
@@ -606,7 +945,7 @@ private fun PlayerScreen(
             )
         }
 
-        if (buffering && !pip) {
+        if (buffering && !pip && switchingLabel == null) {
             CircularProgressIndicator(
                 color = Aurora.colors.brand,
                 modifier = Modifier
@@ -615,8 +954,57 @@ private fun PlayerScreen(
             )
         }
 
+        // 切集的等待：转圈 + 一行说清楚在等哪一集。与缓冲转圈同一套视觉，但多一句话——
+        // 「点了第 5 集却什么都没发生」和「正在取第 5 集」是两种完全不同的体验（规格 6.5）。
+        if (switchingLabel != null && !pip) {
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CircularProgressIndicator(color = Aurora.colors.brand, modifier = Modifier.size(44.dp))
+                Spacer(Modifier.height(AuroraSpacing.m))
+                Text(
+                    text = "正在获取$switchingLabel…",
+                    color = Aurora.colors.text,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+
         if (!pip) {
             hint?.let { current -> GestureHintOverlay(current, Modifier.align(Alignment.Center)) }
+        }
+
+        // 片尾卡片在控制层之上：它要压住画面，也要能接住自己的两个按钮。
+        // 「点卡片以外的任何位置取消」靠一层透明的手势捕获层实现（规格 6.3）——
+        // 刻意不做成「点画面进下一集」：误触进下一集比多按一次取消烦人得多。
+        if (endCard != null && !pip) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onCancelEndCard,
+                    ),
+            )
+            EndCardOverlay(
+                card = endCard,
+                modifier = Modifier.align(Alignment.Center),
+                onPlayNow = onPlayNextNow,
+                onCancel = onCancelEndCard,
+            )
+        }
+
+        // 选集面板盖在最上面：它有遮罩，打开时下面所有东西都不该收到点击。
+        if (sheetOpen && !pip) {
+            EpisodeSheet(
+                play = episodes,
+                watched = watchedEpisodes,
+                onToggleAutoNext = onAutoNextChanged,
+                onPick = onPickEpisode,
+                onDismiss = onCloseEpisodes,
+            )
         }
 
         AnimatedVisibility(
@@ -627,6 +1015,8 @@ private fun PlayerScreen(
         ) {
             PlayerControls(
                 title = title,
+                episodes = episodes,
+                onOpenEpisodes = onOpenEpisodes,
                 playing = playing,
                 positionMs = if (scrubbing) scrubMs else positionMs,
                 durationMs = durationMs,
@@ -795,6 +1185,8 @@ private fun GestureLayer(
 @Composable
 private fun PlayerControls(
     title: String,
+    episodes: EpisodePlayback,
+    onOpenEpisodes: () -> Unit,
     playing: Boolean,
     positionMs: Long,
     durationMs: Long,
@@ -825,18 +1217,50 @@ private fun PlayerControls(
             .fillMaxSize()
             .background(colors.scrim),
     ) {
-        Text(
-            text = title,
-            color = colors.text,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        // 标题行是选集面板唯一的入口。有选集时可点、末尾带 caret-down；没有选集时它就是
+        // 一段纯文本——按钮缺席比按钮点了没反应好（规格 6.1）。命中区抬到 48dp，
+        // 因为 15sp 的文字本身只有十几 dp 高。
+        val hasEpisodes = episodes.hasEpisodes
+        Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.m)
-                .fillMaxWidth(0.6f),
-        )
+                .padding(horizontal = AuroraSpacing.l)
+                .fillMaxWidth(0.6f)
+                .heightIn(min = AuroraSpacing.touchTarget)
+                .then(
+                    if (hasEpisodes) {
+                        Modifier
+                            .semantics {
+                                contentDescription = episodes.currentLabel()
+                                    ?.let { "选集，$it，共 ${episodes.count} 集" }
+                                    ?: "选集，共 ${episodes.count} 集"
+                            }
+                            .clickable(
+                                role = Role.Button,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onOpenEpisodes,
+                            )
+                    } else {
+                        Modifier
+                    }
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                color = colors.text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (hasEpisodes) {
+                Spacer(Modifier.width(AuroraSpacing.xs))
+                CaretDownGlyph(tint = colors.textSecondary, side = 14.dp)
+            }
+        }
 
         // 右上角：把画面交出去的两个动作。
         Row(
@@ -1047,6 +1471,328 @@ private fun ControlChip(label: String, active: Boolean, onClick: () -> Unit) {
             .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.xs + 2.dp),
     )
 }
+
+/** 标题行末尾的展开箭头。自己画：图标集里没有 caret 这一类形状，为它加一个 drawable 不值。 */
+@Composable
+private fun CaretDownGlyph(tint: Color, side: Dp) {
+    Canvas(Modifier.size(side)) {
+        val path = Path().apply {
+            moveTo(size.width * 0.18f, size.height * 0.34f)
+            lineTo(size.width * 0.5f, size.height * 0.68f)
+            lineTo(size.width * 0.82f, size.height * 0.34f)
+        }
+        drawPath(path, tint, style = Stroke(width = size.width * 0.14f))
+    }
+}
+
+/** 「已看」的对勾。与颜色一起用——不以颜色为唯一指示（规格 8）。 */
+@Composable
+private fun CheckGlyph(tint: Color, side: Dp) {
+    Canvas(Modifier.size(side)) {
+        val path = Path().apply {
+            moveTo(size.width * 0.2f, size.height * 0.55f)
+            lineTo(size.width * 0.42f, size.height * 0.76f)
+            lineTo(size.width * 0.8f, size.height * 0.26f)
+        }
+        drawPath(path, tint, style = Stroke(width = size.width * 0.16f))
+    }
+}
+
+/**
+ * 开关行的尾巴。整行才是开关（`SettingRow` 的 `toggleable`），这里只做展示，
+ * 颜色与设置页 / 隐私页保持一致——同一份 `SwitchDefaults.colors`。
+ */
+@Composable
+private fun SwitchTrailing(checked: Boolean) {
+    val c = Aurora.colors
+    Switch(
+        checked = checked,
+        onCheckedChange = null,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = c.onBrand,
+            checkedTrackColor = c.brand,
+            uncheckedThumbColor = c.textMuted,
+            uncheckedTrackColor = c.surfaceHover,
+            uncheckedBorderColor = c.border,
+        ),
+    )
+}
+
+/**
+ * 选集面板（规格 6.2）。
+ *
+ * 三块：剧名 + `共 N 集`、自动下一集的开关行、5 列剧集网格。复用浏览器的
+ * [AuroraBottomSheet]：遮罩关闭、面板吃点击、上沿圆角这些行为都已经定好了，不必再来一遍。
+ */
+@Composable
+private fun EpisodeSheet(
+    play: EpisodePlayback,
+    watched: Set<Int>,
+    onToggleAutoNext: (Boolean) -> Unit,
+    onPick: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = Aurora.colors
+    val list = play.list ?: return
+    val current = play.currentIndex()
+    AuroraBottomSheet(onDismiss = onDismiss) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = AuroraSpacing.s),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = list.seriesTitle,
+                color = colors.text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(AuroraSpacing.m))
+            Text(
+                text = "共 ${play.count} 集",
+                color = colors.textMuted,
+                fontSize = 12.sp,
+            )
+        }
+        SettingRow(
+            title = "自动播放下一集",
+            toggleState = play.autoNext,
+            onClick = { onToggleAutoNext(!play.autoNext) },
+            trailing = { SwitchTrailing(play.autoNext) },
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = EpisodeGridMaxHeight)
+                .verticalScroll(rememberScrollState())
+                .padding(top = AuroraSpacing.m),
+        ) {
+            // 5 列：412dp 宽度下 5×64dp 加间距正好铺满（规格 6.2）。用 chunked + Row 而不是
+            // FlowRow：后者还是实验 API，而这里的列数是固定的。
+            list.episodes.chunked(EpisodeColumns).forEachIndexed { rowIndex, row ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = AuroraSpacing.s),
+                    horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.s),
+                ) {
+                    row.forEachIndexed { columnIndex, episode ->
+                        val index = rowIndex * EpisodeColumns + columnIndex
+                        val number = play.number(episode)
+                        EpisodeCell(
+                            label = play.shortLabel(episode),
+                            current = index == current,
+                            watched = number != null && number in watched,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onPick(index) },
+                        )
+                    }
+                    // 最后一行不满时用空位撑住，格子才不会被拉宽——5 列宽度一致比「把最后一格
+                    // 拉长」整齐得多。
+                    repeat(EpisodeColumns - row.size) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(AuroraSpacing.s))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.m),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            EpisodeLegend(current = true, label = "正在看")
+            EpisodeLegend(current = false, label = "未看")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CheckGlyph(tint = colors.textMuted, side = 11.dp)
+                Spacer(Modifier.width(5.dp))
+                Text(text = "已看", color = colors.textDisabled, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+/** 图例里的一格：正在看画品牌色描边，未看画底色。 */@Composable
+private fun EpisodeLegend(current: Boolean, label: String) {
+    val colors = Aurora.colors
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(11.dp)
+                .then(
+                    if (current) {
+                        Modifier.border(1.5.dp, colors.brand, RoundedCornerShape(2.dp))
+                    } else {
+                        Modifier.background(colors.surfaceHover, RoundedCornerShape(2.dp))
+                    }
+                )
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(text = label, color = colors.textDisabled, fontSize = 11.sp)
+    }
+}
+
+/**
+ * 剧集网格里的一格。
+ *
+ * 三态：正在看（品牌色描边 + 品牌色文字）、已看（文字弱化 + 对勾）、未看（底色 + 常规文字）。
+ * 无障碍：命中区 ≥ 48dp；状态如实暴露——正在看用 `selected`，已看 / 未看用
+ * `stateDescription`。**不以颜色为唯一指示**：「已看」同时有对勾（规格 8）。
+ */
+@Composable
+private fun EpisodeCell(
+    label: String,
+    current: Boolean,
+    watched: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val colors = Aurora.colors
+    val shape = RoundedCornerShape(AuroraRadius.xs)
+    val state = when {
+        current -> "正在看"
+        watched -> "已看过"
+        else -> "未看过"
+    }
+    Box(
+        modifier = modifier
+            .height(EpisodeCellHeight)
+            .then(
+                if (current) Modifier.border(1.5.dp, colors.brand, shape)
+                else Modifier.background(colors.surfaceHover, shape)
+            )
+            .semantics {
+                // 标签本身就是数字时读成「第 12 集」；不是数字（「预告」）时原样读，
+                // 「第 预告 集」这种话读出来是坏的。
+                contentDescription = if (label.toIntOrNull() != null) "第 $label 集" else label
+                stateDescription = state
+            }
+            .clickable(
+                role = Role.Button,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = when {
+                current -> colors.brand
+                watched -> colors.textMuted
+                else -> colors.text
+            },
+            fontSize = 14.sp,
+            fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+        )
+        if (watched && !current) {
+            Box(Modifier.align(Alignment.TopEnd).padding(3.dp)) {
+                CheckGlyph(tint = colors.textMuted, side = 10.dp)
+            }
+        }
+    }
+}
+
+/**
+ * 片尾卡片（规格 6.3）。
+ *
+ * 有下一集时是「大号秒数 + 下一集 · 第 N 集 + 3 秒后自动播放 + 立即播放 / 取消」；
+ * 已经是最后一集时只有一句说明、没有按钮（那 1.5 秒是自动消失的，给按钮没有意义）。
+ *
+ * 倒计时用 `liveRegion = Polite` 播报：它是「过一会儿自己会发生的事」，该读给用户听，
+ * 但不该抢焦点、打断正在读的内容。
+ */
+@Composable
+private fun EndCardOverlay(
+    card: EndCard,
+    modifier: Modifier = Modifier,
+    onPlayNow: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val colors = Aurora.colors
+    val live = Modifier.semantics {
+        liveRegion = LiveRegionMode.Polite
+        contentDescription = if (card.nextIndex == null) {
+            card.label
+        } else {
+            "${card.label}，${card.secondsLeft} 秒后自动播放"
+        }
+    }
+    Column(
+        modifier = modifier
+            .fillMaxWidth(0.62f)
+            .background(colors.bgElevated.copy(alpha = 0.96f), RoundedCornerShape(AuroraRadius.l))
+            .border(1.dp, colors.divider, RoundedCornerShape(AuroraRadius.l))
+            .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.l),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (card.nextIndex != null) {
+            Text(
+                text = card.secondsLeft.toString(),
+                color = colors.brand,
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = live,
+            )
+            Spacer(Modifier.height(AuroraSpacing.s))
+        }
+        Text(
+            text = card.label,
+            color = colors.text,
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center,
+            modifier = if (card.nextIndex == null) live else Modifier,
+        )
+        if (card.nextIndex != null) {
+            Spacer(Modifier.height(AuroraSpacing.xs))
+            Text(
+                text = "${card.secondsLeft} 秒后自动播放",
+                color = colors.textMuted,
+                fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(AuroraSpacing.l))
+            Row(horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.m)) {
+                EndCardButton("立即播放", primary = true, onClick = onPlayNow)
+                EndCardButton("取消", primary = false, onClick = onCancel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EndCardButton(label: String, primary: Boolean, onClick: () -> Unit) {
+    val colors = Aurora.colors
+    Text(
+        text = label,
+        color = if (primary) colors.onBrand else colors.text,
+        fontSize = 13.sp,
+        modifier = Modifier
+            .background(
+                color = if (primary) colors.brand else colors.surfaceHover,
+                shape = RoundedCornerShape(AuroraRadius.full),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.s),
+    )
+}
+
+/** 选集网格的列数。5 列是 412dp 宽度下的取值（规格 6.2）。 */
+private const val EpisodeColumns = 5
+
+/** 网格里一格的高度。 */
+private val EpisodeCellHeight = 44.dp
+
+/**
+ * 网格区最高多少。
+ *
+ * 一季 100 集的话 20 行能把整屏铺满、把「自动播放下一集」那行挤出视野，所以网格自己滚。
+ * 460dp 与浏览器里的 `SheetContentMaxHeight` 取同一个值——两个抽屉看起来才是一套东西。
+ */
+private val EpisodeGridMaxHeight = 460.dp
 
 /** 三个二级面板：倍速、清晰度、画面比例。 */
 @Composable

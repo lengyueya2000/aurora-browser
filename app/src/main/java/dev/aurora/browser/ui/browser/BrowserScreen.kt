@@ -62,6 +62,10 @@ import dev.aurora.browser.data.DownloadsRepository
 import dev.aurora.browser.data.FaviconStore
 import dev.aurora.browser.domain.BackOutcome
 import dev.aurora.browser.domain.model.BrowserTab
+import dev.aurora.browser.media.EpisodeCodec
+import dev.aurora.browser.media.EpisodeList
+import dev.aurora.browser.media.EpisodeSession
+import dev.aurora.browser.media.EpisodeTabSync
 import dev.aurora.browser.media.MediaDownload
 import dev.aurora.browser.media.MediaUrls
 import dev.aurora.browser.media.OfflineItem
@@ -173,6 +177,26 @@ fun BrowserScreen(
             fullscreen.hide()
             pool.disposeAll()
         }
+    }
+
+    /**
+     * 播放器切集后通知浏览器把该标签挪到新一集（追剧模式，见 `EpisodeSession`）。
+     *
+     * 装上 / 卸下的位置与池的生命周期对齐：池换了一套（换 `vm`）时，旧的那份通知必须跟着
+     * 卸掉，否则会往一个已经作废的标签列表里写地址。
+     *
+     * 回调里读 `vm.activeTab.value` 而不是捕获组合里的 `active`——通知可能在组合重建之后才
+     * 到（播放器是另一个界面，它切集时我们这边可能已经重组过好几次了），捕获值会是旧的。
+     *
+     * **不参与播放链路**：标签已经被回收、地址导航失败，都不影响播放器里正在放的那一集。
+     * 无痕标签照样导航——「无痕」约束的是落盘的历史，不是当前这次加载。
+     */
+    DisposableEffect(pool) {
+        EpisodeSession.tabSync = EpisodeTabSync { pageUrl ->
+            val tab = vm.activeTab.value
+            pool.navigate(tab.id, pageUrl)
+        }
+        onDispose { EpisodeSession.tabSync = EpisodeTabSync { } }
     }
 
     var progress by remember { mutableIntStateOf(0) }
@@ -306,10 +330,47 @@ fun BrowserScreen(
                 val mime = fromPage?.type.orEmpty()
                 when (action) {
                     MediaAction.PLAY -> {
-                        if (target == null) {
-                            vm.showMessage("没嗅到这个视频的真实流地址，先让它播几秒再试")
-                        } else {
-                            openInPlayer(context, target, active.title, active.url, extra, vm)
+                        val playUrl = target
+                        val pageUrl = active.url
+                        when {
+                            playUrl == null ->
+                                vm.showMessage("没嗅到这个视频的真实流地址，先让它播几秒再试")
+
+                            // 页面地址是选集判定的基准（相对地址按它绝对化、主键跟它比），
+                            // 空白标签上没得判，直接当单集视频播。
+                            pageUrl.isNullOrBlank() -> openInPlayer(
+                                context = context,
+                                url = playUrl,
+                                title = active.title,
+                                referer = null,
+                                extra = extra,
+                                vm = vm,
+                            )
+
+                            else -> {
+                                // 顺手提取选集（追剧模式）。**只等第一拍**：用户按下的这一刻页面
+                                // 早就加载完了，选集要是在 DOM 里，这一拍就够；为等 SPA 迟到的
+                                // 列表把开播拖慢 2.5 秒，对占绝大多数的单集视频是纯粹的伤害。
+                                // 抓不到就当单集视频——按钮缺席好过按钮点了没反应（规格 5.5/7）。
+                                pool.extractEpisodes(
+                                    tabId = tabId,
+                                    pageUrl = pageUrl,
+                                    pageTitle = active.title,
+                                    gaps = longArrayOf(0L),
+                                ) { episodes ->
+                                    openInPlayer(
+                                        context = context,
+                                        url = playUrl,
+                                        title = active.title,
+                                        referer = pageUrl,
+                                        extra = extra,
+                                        vm = vm,
+                                        episodes = episodes,
+                                        incognito = active.isIncognito,
+                                        desktopMode = vm.desktopMode.value,
+                                    )
+                                }
+                            }
                         }
                     }
                     MediaAction.DOWNLOAD -> {
@@ -759,6 +820,10 @@ private sealed interface MediaSheet {
  * 画面就是黑的——用户实测的「全屏之后是黑屏」。换成原生播放器就没有这一层。
  *
  * @param extra 页面传过来的「当前播到第几秒」；解析不了就从头播。
+ * @param episodes 页面里提取到的选集（追剧模式）；`null` 表示这页没判出剧集，播放器里
+ *   就没有选集面板，播完停在结尾——与 1.13 一致。
+ * @param incognito 无痕标签：「已看」标记不落盘（见 `PlaybackPreferences.markWatched`）。
+ * @param desktopMode 当前是否「请求桌面版网站」；播放器切集时的嗅探要用同一个 UA。
  */
 private fun openInPlayer(
     context: Context,
@@ -767,9 +832,26 @@ private fun openInPlayer(
     referer: String?,
     extra: String,
     vm: BrowserViewModel,
+    episodes: EpisodeList? = null,
+    incognito: Boolean = false,
+    desktopMode: Boolean = false,
 ) {
     val startMs = extra.trim().toLongOrNull()?.coerceAtLeast(0L)?.times(1000L) ?: 0L
-    runCatching { context.startActivity(PlayerActivity.intent(context, url, title, referer, startMs)) }
+    val intent = PlayerActivity.intent(
+        context = context,
+        url = url,
+        title = title,
+        referer = referer,
+        startPositionMs = startMs,
+        // 剧名与选集随 Intent 走：播放器是另一个界面，它拿不到页面上下文。JSON 而不是
+        // 一个 Parcelable 列表——跨进程重建（进程被回收后恢复）时 JSON 更耐操，
+        // 而且它能在纯 JVM 单测里往返（见 EpisodeCodecTest）。
+        episodes = episodes?.let { EpisodeCodec.toJson(it) },
+        episodeIndex = episodes?.currentIndex ?: -1,
+        incognito = incognito,
+        desktopMode = desktopMode,
+    )
+    runCatching { context.startActivity(intent) }
         .onFailure { vm.showMessage("无法打开内置播放器") }
 }
 

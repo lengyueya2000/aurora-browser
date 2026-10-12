@@ -24,6 +24,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import dev.aurora.browser.BuildConfig
 import dev.aurora.browser.data.DownloadRequest
+import dev.aurora.browser.media.EpisodeList
 import dev.aurora.browser.media.MediaSniffer
 import java.io.ByteArrayInputStream
 
@@ -115,6 +116,15 @@ class WebViewPool(
     private var nextCaptureToken = 0
 
     /**
+     * 每个标签当前那一轮**选集提取**的代号；标签被释放时抹掉，让还在飞的提取自己作废。
+     *
+     * 与 [captureTokens] 同一个理由：`evaluateJavascript` 的回调可能晚于 `dispose`，
+     * 也可能晚于用户手快发起的下一轮提取——晚到的那一轮不该再往界面上写结果。
+     */
+    private val episodeTokens = mutableMapOf<String, Int>()
+    private var nextEpisodeToken = 0
+
+    /**
      * 标签缩略图（标签网格用），按 tabId 存。
      *
      * 只放内存、不进磁盘：缩略图是给「现在这些标签」看的，重启后标签本来就没了，
@@ -161,6 +171,8 @@ class WebViewPool(
         MediaSniffer.clear(tabId)
         // 让还在飞的连拍作废：见 captureTokens。
         captureTokens.remove(tabId)
+        // 选集提取同理：关掉的标签不该再往界面上回结果。
+        episodeTokens.remove(tabId)
         // 不 recycle：位图可能还在标签网格里画着，手动回收会让它在下一帧崩掉。
         // 位图在现代 Android 上就在 Java 堆里，去掉引用就够了。
         thumbnails.remove(tabId)
@@ -170,6 +182,7 @@ class WebViewPool(
     fun disposeAll() {
         views.keys.forEach { MediaSniffer.clear(it) }
         captureTokens.clear()
+        episodeTokens.clear()
         views.values.forEach(::destroy)
         views.clear()
         thumbnails.clear()
@@ -398,6 +411,62 @@ class WebViewPool(
     fun evaluateVideos(tabId: String, onResult: (List<VideoSource>) -> Unit) =
         evaluateRaw(tabId, VideoExtractor.SCRIPT) { onResult(VideoExtractor.parse(it)) }
 
+    /**
+     * 提取当前页面的选集列表（追剧模式，见 [EpisodeSession]）。
+     *
+     * **按需求值，带重试**：SPA 站点的选集常是异步渲染的，`onPageFinished` 那一刻可能还没有；
+     * 先立即试一次，拿不到就按 [gaps] 再试。拿到非空结果就停，最后一拍还没有才回 `null`——
+     * 调用方据此当成单集视频，一切照旧。
+     *
+     * @param gaps 每一拍的时间点。默认 [EpisodeGapsMs]（覆盖异步渲染）；开播前那次传
+     *   `longArrayOf(0L)`——那一步不该为迟到的列表把开播拖住（见 BrowserScreen 的 PLAY 分支）。
+     */
+    fun extractEpisodes(
+        tabId: String,
+        pageUrl: String,
+        pageTitle: String,
+        gaps: LongArray = EpisodeGapsMs,
+        onResult: (EpisodeList?) -> Unit,
+    ) {
+        val token = ++nextEpisodeToken
+        episodeTokens[tabId] = token
+        attemptExtract(tabId, pageUrl, pageTitle, 0, token, gaps, onResult)
+    }
+
+    private fun attemptExtract(
+        tabId: String,
+        pageUrl: String,
+        pageTitle: String,
+        attempt: Int,
+        token: Int,
+        gaps: LongArray,
+        onResult: (EpisodeList?) -> Unit,
+    ) {
+        main.postDelayed({
+            if (episodeTokens[tabId] != token) return@postDelayed
+            evaluateRaw(tabId, EpisodeExtractor.SCRIPT) { raw ->
+                if (episodeTokens[tabId] != token) return@evaluateRaw
+                val list = EpisodeExtractor.parse(raw, pageUrl, pageTitle)
+                if (list != null || attempt == gaps.lastIndex) {
+                    onResult(list)
+                } else {
+                    attemptExtract(tabId, pageUrl, pageTitle, attempt + 1, token, gaps, onResult)
+                }
+            }
+        }, gaps[attempt])
+    }
+
+    /**
+     * 让某个标签导航到某个地址。
+     *
+     * 追剧模式切集后用它把标签挪到正在看的那一集，用户退出全屏时人在对的页面
+     * （见 [EpisodeSession]）。它**不参与播放链路**：标签不在、加载失败都不影响播放。
+     */
+    fun navigate(tabId: String, url: String) {
+        val web = views[tabId] ?: return
+        runCatching { web.loadUrl(url) }
+    }
+
     private fun destroy(webView: WebView) {
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.stopLoading()
@@ -425,6 +494,15 @@ class WebViewPool(
          * 得等到页面第二次加载完成才拍得到。与其猜一个够长的延时，不如拍不到就再试。
          */
         internal val CaptureGapsMs = longArrayOf(400L, 1500L, 3000L)
+
+        /**
+         * 选集提取的时间表（毫秒）。第一拍是立即——多数页面在 `onPageFinished` 时选集已经
+         * 在 DOM 里了；后两拍留给异步渲染选集的 SPA。
+         *
+         * 与 [CaptureGapsMs] 不同的是它**只跑一次、拿到就停**：提取是个纯读操作，不像拍图
+         * 那样「越晚越完整」，所以没必要为了一张更全的列表一直重试。
+         */
+        internal val EpisodeGapsMs = longArrayOf(0L, 800L, 2500L)
 
         /**
          * 默认的取景范围：WebView 挂在窗口上时是它自己的位置和尺寸，否则看不见。

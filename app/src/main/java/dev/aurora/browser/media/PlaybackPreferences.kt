@@ -26,6 +26,16 @@ data class ResumeEntry(
 }
 
 /**
+ * 一部剧的观看记录：哪些集看完了。
+ *
+ * 为什么不能拿「继续观看」列表反推：播完的集会被 [PlaybackPreferences.forget] 删掉
+ * （那是为了不让主页堆一串看完的集），所以续播列表里恰恰没有「已看」的证据。
+ *
+ * @param key 剧集标识，见 [PlaybackPreferences.seriesKey]。
+ */
+data class WatchedSeries(val key: String, val episodes: Set<Int>, val at: Long)
+
+/**
  * 播放偏好：**记忆播放进度**、上次用的倍速，以及主页「继续观看」要的那张列表。
  *
  * 起因是「播放效果不太好」里的两条——每次全屏都从第 0 秒开始、每次都要重新调倍速。
@@ -120,6 +130,76 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
         prefs.edit().putFloat(KEY_SPEED, speed).apply()
     }
 
+    // ── 追剧模式（见 EpisodeList / EpisodeSession）──────────────
+
+    /** 自动播放下一集；默认开。 */
+    fun autoNext(): Boolean = runCatching { prefs.getBoolean(KEY_AUTO_NEXT, true) }.getOrDefault(true)
+
+    fun rememberAutoNext(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_NEXT, enabled).apply()
+    }
+
+    /** 这一部剧里已经看完的集号。 */
+    fun watched(seriesKey: String): Set<Int> =
+        watchedSeries().firstOrNull { it.key == seriesKey }?.episodes.orEmpty()
+
+    /**
+     * 记下「这一集看完了」。
+     *
+     * 无痕标签不写——与「无痕不记历史」同一个口径，由调用方决定要不要调。
+     */
+    fun markWatched(seriesKey: String, episode: Int) {
+        if (seriesKey.isBlank() || episode < 0) return
+        val current = watched(seriesKey)
+        if (episode in current) return
+        val entry = WatchedSeries(
+            key = seriesKey,
+            // 集号上限只是防呆（一季 500 集是荒谬的）：真到了上限，被丢的是**新标记的
+            // 那一个**——`current + episode` 把新元素排在最后，`take` 从前面留。
+            episodes = (current + episode).take(MAX_WATCHED_PER_SERIES).toSet(),
+            at = System.currentTimeMillis(),
+        )
+        writeWatched(
+            (listOf(entry) + watchedSeries().filterNot { it.key == seriesKey }).take(MAX_WATCHED_SERIES),
+        )
+    }
+
+    fun forgetWatched(seriesKey: String) {
+        writeWatched(watchedSeries().filterNot { it.key == seriesKey })
+    }
+
+    /** 观看记录列表，最近看的在最前。坏数据一律当空列表。 */
+    fun watchedSeries(): List<WatchedSeries> {
+        val raw = prefs.getString(KEY_WATCHED, null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            (0 until array.length()).mapNotNull { i ->
+                val o = array.optJSONObject(i) ?: return@mapNotNull null
+                val key = o.optString("key").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val eps = o.optJSONArray("eps") ?: JSONArray()
+                WatchedSeries(
+                    key = key,
+                    episodes = (0 until eps.length()).map { eps.optInt(it, -1) }
+                        .filter { it >= 0 }.toSet(),
+                    at = o.optLong("at"),
+                )
+            }.sortedByDescending { it.at }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun writeWatched(list: List<WatchedSeries>) {
+        val array = JSONArray()
+        list.forEach { s ->
+            array.put(
+                JSONObject()
+                    .put("key", s.key)
+                    .put("eps", JSONArray(s.episodes.sorted()))
+                    .put("at", s.at),
+            )
+        }
+        prefs.edit().putString(KEY_WATCHED, array.toString()).apply()
+    }
+
     private fun write(list: List<ResumeEntry>) {
         val array = JSONArray()
         list.forEach {
@@ -143,6 +223,8 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
         private const val KEY_RESUME = "resume_v2"
         private const val KEY_POSITION_PREFIX = "pos_"
         private const val KEY_SPEED = "speed"
+        private const val KEY_AUTO_NEXT = "auto_next"
+        private const val KEY_WATCHED = "watched_v1"
 
         /** 看不够这么久就不值得记，从头播反而更符合预期。 */
         const val MIN_RESUME_MS = 5_000L
@@ -152,6 +234,23 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
 
         /** 列表上限：主页只露前几条，留一点余量给「最近看的顺序」调整。 */
         const val MAX_RESUME = 30
+
+        /** 记多少部剧的「已看」；超出丢最旧的。 */
+        const val MAX_WATCHED_SERIES = 50
+
+        /** 每部剧记多少集。 */
+        const val MAX_WATCHED_PER_SERIES = 500
+
+        /**
+         * 剧集标识：主机 + 剧名。
+         *
+         * 带上主机是为了不让两个不同站点的同名剧互相污染「已看」——「已看」是按剧集整体
+         * 记的，串了的话用户会看到「明明没看过却打着勾」。
+         */
+        fun seriesKey(seriesTitle: String, anyEpisodeUrl: String): String {
+            val host = runCatching { java.net.URI(anyEpisodeUrl).host }.getOrNull().orEmpty()
+            return "$host|$seriesTitle"
+        }
 
         fun create(context: Context): PlaybackPreferences =
             PlaybackPreferences(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))

@@ -199,4 +199,106 @@ class PlaybackPreferencesTest {
         assertThat(PlaybackPreferences.create(context).resumable().map { it.title })
             .containsExactly("有地址")
     }
+
+    // ---------- 追剧模式 ----------
+
+    private val show = PlaybackPreferences.seriesKey("功夫女足", url)
+
+    /** 默认开：追剧这件事本身就是「接着看」，默认关等于这功能默认不生效。 */
+    @Test fun autoNextDefaultsToOn() {
+        assertThat(prefs.autoNext()).isTrue()
+        prefs.rememberAutoNext(false)
+        assertThat(prefs.autoNext()).isFalse()
+        assertThat(PlaybackPreferences.create(context).autoNext()).isFalse()
+    }
+
+    @Test fun watchedEpisodesAreRememberedPerShow() {
+        prefs.markWatched(show, 1)
+        prefs.markWatched(show, 2)
+        assertThat(prefs.watched(show)).containsExactly(1, 2)
+        // 别的剧互不污染。
+        assertThat(prefs.watched(PlaybackPreferences.seriesKey("另一部", url))).isEmpty()
+    }
+
+    /** 同一集重复标记不该重复写（否则每次播完都重写一遍 JSON）。 */
+    @Test fun markingTheSameEpisodeTwiceIsANoOp() {
+        prefs.markWatched(show, 3)
+        prefs.markWatched(show, 3)
+        assertThat(prefs.watched(show)).containsExactly(3)
+    }
+
+    /** 读回来还是集号，不因为 JSON 里存的是字符串 / 数字而漂移。 */
+    @Test fun watchedSurvivesARoundTripThroughDisk() {
+        prefs.markWatched(show, 12)
+        assertThat(PlaybackPreferences.create(context).watched(show)).containsExactly(12)
+    }
+
+    @Test fun forgetWatchedClearsOneShow() {
+        prefs.markWatched(show, 1)
+        val other = PlaybackPreferences.seriesKey("另一部", url)
+        prefs.markWatched(other, 1)
+        prefs.forgetWatched(show)
+        assertThat(prefs.watched(show)).isEmpty()
+        assertThat(prefs.watched(other)).containsExactly(1)
+    }
+
+    /** 空键、负集号直接忽略：写进去只会在偏好文件里留一条谁也读不出来的垃圾。 */
+    @Test fun blankKeysAndNegativeNumbersAreIgnored() {
+        prefs.markWatched("", 1)
+        prefs.markWatched("   ", 1)
+        prefs.markWatched(show, -1)
+        assertThat(prefs.watchedSeries()).isEmpty()
+    }
+
+    @Test fun watchedListIsNewestFirst() {
+        val other = PlaybackPreferences.seriesKey("另一部", url)
+        prefs.markWatched(show, 1)
+        prefs.markWatched(other, 1)
+        assertThat(prefs.watchedSeries().map { it.key }).containsExactly(other, show).inOrder()
+    }
+
+    @Test fun watchedListIsCapped() {
+        repeat(PlaybackPreferences.MAX_WATCHED_SERIES + 5) { i ->
+            prefs.markWatched("c.com|剧 $i", 1)
+        }
+        assertThat(prefs.watchedSeries()).hasSize(PlaybackPreferences.MAX_WATCHED_SERIES)
+    }
+
+    /** 存储损坏时当没有记录，不能让选集面板崩掉。 */
+    @Test fun corruptedWatchedListReadsAsEmpty() {
+        context.getSharedPreferences("aurora_playback", Context.MODE_PRIVATE)
+            .edit()
+            .putString("watched_v1", "[ not json")
+            .commit()
+        val fresh = PlaybackPreferences.create(context)
+        assertThat(fresh.watchedSeries()).isEmpty()
+        assertThat(fresh.watched(show)).isEmpty()
+    }
+
+    /** 少了 key 的记录跳过，其余照常读出来。 */
+    @Test fun watchedEntriesWithoutAKeyAreSkipped() {
+        context.getSharedPreferences("aurora_playback", Context.MODE_PRIVATE)
+            .edit()
+            .putString(
+                "watched_v1",
+                """[{"eps":[1,2],"at":2},{"key":"$show","eps":[7],"at":1}]""",
+            )
+            .commit()
+        assertThat(PlaybackPreferences.create(context).watchedSeries().map { it.key })
+            .containsExactly(show)
+    }
+
+    /**
+     * 剧集标识带上主机：两个站点上的同名剧不能互相污染「已看」——串了的话用户会看到
+     * 「明明没看过却打着勾」。
+     */
+    @Test fun seriesKeyIncludesTheHost() {
+        val a = PlaybackPreferences.seriesKey("功夫女足", "https://a.com/p/1")
+        val b = PlaybackPreferences.seriesKey("功夫女足", "https://b.com/p/1")
+        assertThat(a).isNotEqualTo(b)
+        assertThat(a).isEqualTo("a.com|功夫女足")
+        // 同一部剧的各集在同一个站上，键跨集稳定——这是它能当「已看」的键的前提。
+        assertThat(PlaybackPreferences.seriesKey("功夫女足", "https://a.com/p/9"))
+            .isEqualTo(a)
+    }
 }
