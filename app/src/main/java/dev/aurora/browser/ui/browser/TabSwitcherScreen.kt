@@ -24,8 +24,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.aurora.browser.domain.model.BrowserTab
 import dev.aurora.browser.ui.components.SegmentedControl
 import dev.aurora.browser.ui.components.auroraClickable
@@ -213,8 +215,20 @@ private fun TabCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                // 还没拍到的标签（空白标签、或拍出来是空白）留一块底色，别让卡片空着。
-                else -> Unit
+                // 还没拍到的标签留个占位，别让卡片空着一块——空着看着像坏了。网页给站点
+                // 首字母（与主页快捷入口取不到图标时的退路一致），空白标签给一个主页图标。
+                tab.isNewTab -> Icon(
+                    painter = painterResource(AuroraIcons.Home),
+                    contentDescription = null,
+                    tint = c.textDisabled,
+                    modifier = Modifier.size(24.dp),
+                )
+                else -> Text(
+                    text = hostOf(tab.url).take(1).uppercase(),
+                    color = c.textDisabled,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                )
             }
             // 关闭是独立可点目标，触摸区必须 ≥48dp（全局约束「最小触摸目标 48×48dp」）。
             // 可见的圆形底片仍保持 28dp，由 48dp 触摸区居中包裹它。

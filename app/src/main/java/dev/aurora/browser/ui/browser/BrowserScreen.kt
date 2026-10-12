@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -72,6 +73,7 @@ import dev.aurora.browser.ui.cast.CastController
 import dev.aurora.browser.ui.components.ActionGridTile
 import dev.aurora.browser.ui.components.AuroraBottomSheet
 import dev.aurora.browser.ui.components.BottomToolbar
+import dev.aurora.browser.ui.components.BottomToolbarHeight
 import dev.aurora.browser.ui.components.OmniboxBar
 import dev.aurora.browser.ui.components.SettingRow
 import dev.aurora.browser.ui.components.auroraClickable
@@ -158,6 +160,10 @@ fun BrowserScreen(
     val fullscreen = remember(activity) {
         VideoFullscreenController(activity?.let { ActivityFullscreenHost(it) } ?: NoopFullscreenHost)
     }
+    // 缩略图要从窗口的合成结果里抠出来（见 WebViewPool.captureThumbnailAsync），所以要窗口。
+    val window = activity?.window
+    // 悬浮工具栏叠在网页上，抠图时会把那颗胶囊一起抠进去，所以裁掉它占的那一条。
+    val toolbarInsetPx = with(LocalDensity.current) { BottomToolbarHeight.roundToPx() }
     // WebView 归池所有，离开组合不会自动销毁——必须显式回收，否则退出界面后仍在跑 JS。
     DisposableEffect(Unit) {
         onDispose {
@@ -247,6 +253,15 @@ fun BrowserScreen(
         pool.onPageFinished = { id, title, url ->
             vm.onPageFinished(id, title, url)
             controller.refreshHistory()
+            // 顺手拍一张缩略图。为什么是这一刻：WebView 的画面由渲染进程合成，只有它正
+            // 显示着才拍得到，而「页面刚加载完」是唯一能确定它正显示着、画面又稳定了的时机。
+            // 隔一小会儿再拍是因为 finish 那一刻还在上屏，抠到的还是上一帧。
+            val tab = tabs.firstOrNull { it.id == id }
+            if (tab != null && !tab.isIncognito) {
+                pool.captureThumbnailAsync(id, window, toolbarInsetPx, CaptureDelayMs) { bitmap ->
+                    if (bitmap != null) tabThumbnails = tabThumbnails + (id to bitmap)
+                }
+            }
         }
         pool.onTrackerBlocked = { vm.onTrackerBlocked() }
         pool.onSslError = { vm.onSslError() }
@@ -315,15 +330,24 @@ fun BrowserScreen(
     // 标签网格与菜单面板都要「关闭全部」，收成一个 lambda 免得两处漂移。
     val closeAllTabs = { tabs.forEach { t -> vm.closeTab(t.id) } }
 
+    // 返回键与工具栏后退键共用这一条：能退历史就退历史，退不动了就回首页。
+    // 首页不占 WebView 的历史，所以「网页退到头」不等于「没地方可退」——少了这一步，
+    // 从首页点进一个网页再按返回就直接退出 App 了。
+    val backAction: () -> Unit = {
+        when (vm.onBack(atHome = active.isNewTab, canGoBack = controller.canGoBack())) {
+            BackOutcome.PAGE_BACK -> controller.goBack()
+            // 回首页要把 WebView 一起释放：页面留着只会在后台继续跑，还会污染下一次导航的历史。
+            BackOutcome.GO_HOME -> pool.dispose(vm.goHome())
+            BackOutcome.EXIT_NOW -> activity?.finish()
+            else -> Unit
+        }
+    }
+
     BackHandler(enabled = true) {
         // 全屏视频最优先：全屏中按返回是「退出全屏」，而不是后退网页。
         // 不拦这一下，用户在全屏里按返回会直接离开页面，画面还停在全屏黑底上。
         if (fullscreen.onBackPressed()) return@BackHandler
-        when (vm.onBack(canGoBack = controller.canGoBack())) {
-            BackOutcome.PAGE_BACK -> controller.goBack()
-            BackOutcome.EXIT_NOW -> (context as? Activity)?.finish()
-            else -> Unit
-        }
+        backAction()
     }
 
     Box(
@@ -511,9 +535,10 @@ fun BrowserScreen(
                 BottomToolbar(
                     tabCount = tabs.size,
                     // 读 State.value 才会在组合期订阅快照，历史变化时工具栏才会重组。
-                    canGoBack = controller.canGoBackState.value,
+                    // 「有地方可退」包括退到首页：网页历史退到头了，后退键仍然该亮着。
+                    canGoBack = !active.isNewTab,
                     canGoForward = controller.canGoForwardState.value,
-                    onBack = { controller.goBack() },
+                    onBack = backAction,
                     onForward = { controller.goForward() },
                     onHome = { vm.newTab() },
                     onTabs = {
@@ -733,22 +758,27 @@ private fun openInPlayer(
 }
 
 /**
- * 打开标签网格前，拍下当前标签的缩略图，并收集所有标签已有的缩略图。
+ * 打开标签网格时收集各标签已有的缩略图。
  *
- * 为什么只在「打开网格」这一刻拍：WebView 的画面由渲染进程合成，没挂在窗口上的实例
- * 画出来是空白——只有当前这个标签是显示着的，其余标签的图只能靠它上次显示时留下的那张。
+ * 图不是这一刻拍的：拍图的时机是「页面刚加载完」（见 [pool.onPageFinished]），因为
+ * WebView 的画面由渲染进程合成，只有它正显示着才拍得到。这里只负责把池里存着的图
+ * 按当前标签列表取出来——已关闭的标签即使池里还留着图，也不该再出现在网格里。
  *
- * 无痕标签不拍：网格上照旧给它画无痕图标，浏览内容也就不落到这张图里。
+ * 无痕标签不拍也不显示：网格上照旧给它画无痕图标，浏览内容也就不落到这张图里。
  */
 private fun tabThumbnailMap(
     tabs: List<BrowserTab>,
     active: BrowserTab,
     pool: WebViewPool,
 ): Map<String, Bitmap> {
-    if (!active.isIncognito) pool.captureThumbnail(active.id)
-    // 以当前标签列表为准重建：已关闭的标签即使池里还留着图，也不再出现在网格里。
+    // 兜底：`View.draw()` 在硬件加速下基本拍不出东西，但万一某台设备上 PixelCopy 不可用，
+    // 它至少还能留一张。拍不出来就返回 null，网格照旧画占位图。
+    if (!active.isIncognito && pool.thumbnail(active.id) == null) pool.captureThumbnail(active.id)
     return tabs.mapNotNull { tab -> pool.thumbnail(tab.id)?.let { tab.id to it } }.toMap()
 }
+
+/** 页面加载完到拍缩略图之间的等待：让画面先上屏，否则抠到的还是上一帧。 */
+private const val CaptureDelayMs = 400L
 
 /** 菜单面板的 4×2 动作网格（规格 5.5）。 */
 @Composable

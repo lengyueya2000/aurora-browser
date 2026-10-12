@@ -194,7 +194,7 @@ class BrowserViewModel(
     // ---------- 返回键 ----------
 
     /** 由 Activity 的 BackHandler 调用。 */
-    fun onBack(canGoBack: Boolean): BackOutcome {
+    fun onBack(atHome: Boolean, canGoBack: Boolean): BackOutcome {
         // 除地址栏外的所有二级界面（标签网格、设置、书签、下载、隐私、阅读）都算「面板」，
         // 返回键先关它们；地址栏聚焦单独走 EXIT_OMNIBOX，顺序不能并进面板里。
         val secondary = _surface.value != BrowserSurface.Page &&
@@ -202,6 +202,7 @@ class BrowserViewModel(
         val outcome = back.onBack(
             panelOpen = _menuOpen.value || secondary,
             omniboxFocused = _surface.value == BrowserSurface.Omnibox,
+            atHome = atHome,
             canGoBack = canGoBack,
         )
         when (outcome) {
@@ -214,6 +215,20 @@ class BrowserViewModel(
             else -> Unit
         }
         return outcome
+    }
+
+    /**
+     * 把当前标签退回首页。返回标签 id，让调用方顺带释放那个标签的 WebView。
+     *
+     * 页面是要丢的，不是藏起来：留着它既会在后台继续跑脚本、继续出声，又会让下一次导航
+     * 带上一段「已经回不去的」历史——那样从新页面按返回会退回上一个网页，而不是首页。
+     */
+    fun goHome(): String {
+        val id = tabs.activeId.value
+        tabs.goHome(id)
+        _surface.value = BrowserSurface.Page
+        _menuOpen.value = false
+        return id
     }
 
     private fun armExitHintReset() {

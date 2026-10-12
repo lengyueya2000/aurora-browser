@@ -284,13 +284,15 @@ body{
 .tabcard{background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);
   overflow:hidden;cursor:pointer;box-shadow:var(--shadow-1)}
 .tabcard .prev{height:96px;position:relative;background:#0e1626;overflow:hidden}
-/* 页面缩略图：真机上来自 WebView.draw()，这里是它的样子 */
+/* 页面缩略图：真机上由 PixelCopy 抠窗口画面（页面加载完成后拍），这里是它的样子 */
 .tabcard .prev .shot{position:absolute;inset:0;display:flex;flex-direction:column;gap:6px;
   padding:9px 10px;background:linear-gradient(180deg,#f8fafc,#dfe6ef)}
 .tabcard .prev .shot i{display:block;height:5px;border-radius:2px;background:rgba(15,23,42,.16)}
 .tabcard .prev .shot .hero{height:28px;border-radius:5px;background:linear-gradient(135deg,#1772f6,#0b4fd1)}
+/* 还没拍到预览的卡片：网页给站点首字母，空白标签给主页图标 */
 .tabcard .prev .none{position:absolute;inset:0;display:grid;place-items:center;
   color:var(--color-text-disabled);background:linear-gradient(160deg,#16233a,#0e1626)}
+.tabcard .prev .none .glyph{font-size:22px;font-weight:700}
 .tabcard .prev .cl{position:absolute;right:6px;top:6px;width:26px;height:26px;border-radius:50%;
   background:rgba(2,6,23,.6);display:grid;place-items:center;color:var(--color-text-secondary)}
 .tabcard .cap{padding:9px 10px;display:flex;align-items:center;gap:8px}
@@ -774,7 +776,7 @@ LazyColumn(<br>
             <div class="cap"><span class="tt">无痕标签页</span></div>
           </div>
           <div class="tabcard">
-            <div class="prev"><div class="none"><span data-i="image" data-s="20"></span></div><span class="cl" data-i="x" data-s="15"></span></div>
+            <div class="prev"><div class="none"><span class="glyph">M</span></div><span class="cl" data-i="x" data-s="15"></span></div>
             <div class="cap"><span class="tt">Material 3 设计令牌指南</span></div>
           </div>
           <div class="tabcard">
@@ -1258,7 +1260,7 @@ LazyColumn(<br>
         </div>
         <div class="stg-h">关于</div>
         <div class="stg-group">
-          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.11.0</span></div>
+          <div class="lrow"><span class="ic" data-i="globe" data-s="20"></span><span class="lb">Aurora Browser</span><span class="vl">1.12.0</span></div>
           <div class="lrow"><span class="ic" data-i="link-simple" data-s="20"></span><span class="lb">开源许可</span><span class="go" data-i="caret-right" data-s="16"></span></div>
         </div>
       </div>

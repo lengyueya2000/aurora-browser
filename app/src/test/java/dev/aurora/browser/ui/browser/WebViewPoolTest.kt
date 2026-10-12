@@ -1,11 +1,14 @@
 package dev.aurora.browser.ui.browser
 
+import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Looper
 import android.view.View
+import android.view.Window
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -16,6 +19,7 @@ import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.data.DownloadRequest
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -532,17 +536,17 @@ class WebViewPoolTest {
     }
 
     /**
-     * 拍出来是空白就不当缩略图缓存。
+     * 没在显示着的标签同步也拍不到。
      *
-     * Robolectric 画不出真实的网页画面，`draw()` 得到的是一张纯色图，正好走在这条分支上；
-     * 真机上则是 WebView 渲染失败的情形。两种情况的处理一致：宁可让网格退回占位图，
-     * 也不要给用户看一块白板。
+     * 判据是「挂没挂在窗口上」（见 [WebViewPool.Companion.attachedBounds]）。Robolectric 里
+     * 挂上去也画不出真实网页，所以「拍出来是空白」那条分支由 [asyncCaptureRejectsAUniformWindow]
+     * 和 [blankDetectionSamplesTheWholeImage] 覆盖。
      */
-    @Test fun aBlankCaptureIsNotCached() {
+    @Test fun capturingAnUndisplayedTabReturnsNull() {
         val pool = newPool(CountingFactory())
         val web = pool.get("a", false)
-        web.layout(0, 0, 720, 1280)
         web.loadUrl("https://a.com")
+        assertThat(web.isAttachedToWindow).isFalse()
         assertThat(pool.captureThumbnail("a")).isNull()
         assertThat(pool.thumbnail("a")).isNull()
     }
@@ -569,5 +573,202 @@ class WebViewPoolTest {
             android.graphics.Paint().apply { color = android.graphics.Color.RED },
         )
         assertThat(WebViewPool.isBlankThumbnail(withContent)).isFalse()
+    }
+
+    // ---------- 缩略图：真机走的 PixelCopy 那条路 ----------
+
+    /**
+     * 记录取景框的假取景器。真机由 `PixelCopy` 实现，测试里没有真窗口，用它顶替。
+     *
+     * [ok] 模拟 `PixelCopy` 的结果码，[blank] 模拟「抠到了但窗口还没画出页面」。
+     */
+    private class FakeCapture(
+        private val ok: Boolean = true,
+        private val blank: Boolean = false,
+    ) : WindowCapture {
+        val sources = mutableListOf<Rect>()
+        override fun capture(
+            window: Window,
+            source: Rect,
+            dest: Bitmap,
+            onResult: (Boolean) -> Unit,
+        ) {
+            sources += Rect(source)
+            if (ok) {
+                dest.eraseColor(android.graphics.Color.WHITE)
+                if (!blank) {
+                    // 上下两半不同色：真实页面必然有这种色差，纯色会被当成「没拍到」。
+                    Canvas(dest).drawRect(
+                        0f, 0f, dest.width.toFloat(), dest.height / 2f,
+                        android.graphics.Paint().apply { color = android.graphics.Color.RED },
+                    )
+                }
+            }
+            onResult(ok)
+        }
+    }
+
+    /**
+     * 假装 WebView 占了窗口里的一块（含偏移，真机上它就在地址栏下面）。
+     *
+     * Robolectric 的 `WebView` 量不出尺寸——`layout()` 对它是空操作，所以真实取尺寸的那段
+     * 在这儿永远回 null，抠图逻辑也就一步都走不到。注入一个固定矩形才测得到后面的事。
+     */
+    private val fakeBounds: (WebView) -> Rect? = { Rect(10, 160, 730, 1440) }
+
+    private fun newCapturingPool(
+        activity: Activity,
+        capture: WindowCapture,
+        bounds: ((WebView) -> Rect?)? = fakeBounds,
+    ) = WebViewPool(
+        activity,
+        { ctx -> WebView(ctx) },
+        { false },
+        capture,
+        bounds ?: WebViewPool.Companion::attachedBounds,
+    )
+
+    /**
+     * 建一个挂在窗口上、已经加载过页面的标签。
+     *
+     * 真机上只有正显示着的那一个标签拍得到图——没挂窗口的 WebView 画不出东西。测试里
+     * 也得照这个前提来，否则测的就不是真机会遇到的情况。
+     */
+    private fun attachedTab(
+        capture: WindowCapture,
+        tabId: String = "a",
+        url: String = "https://a.com",
+    ): Pair<WebViewPool, WebView> {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val pool = newCapturingPool(activity, capture)
+        val web = pool.get(tabId, false)
+        activity.setContentView(web)
+        web.loadUrl(url)
+        return pool to web
+    }
+
+    private fun window(web: WebView): Window = (web.context as Activity).window
+
+    private fun idleMain() = shadowOf(Looper.getMainLooper()).idle()
+
+    @Test fun asyncCaptureStoresAScaledThumbnail() {
+        val capture = FakeCapture()
+        val (pool, web) = attachedTab(capture)
+        var captured: Bitmap? = null
+
+        pool.captureThumbnailAsync("a", window(web), bottomInsetPx = 0) { captured = it }
+        idleMain()
+
+        assertThat(capture.sources).hasSize(1)
+        assertThat(captured).isNotNull()
+        assertThat(captured!!.width).isEqualTo(WebViewPool.ThumbnailWidth)
+        assertThat(captured!!.height).isEqualTo(WebViewPool.ThumbnailHeight)
+        assertThat(pool.thumbnail("a")).isSameInstanceAs(captured)
+    }
+
+    /** 悬浮工具栏会叠在网页上，抠图时必须把它那一条裁掉，否则缩略图里挂着一颗胶囊。 */
+    @Test fun asyncCaptureTrimsTheToolbarBand() {
+        val capture = FakeCapture()
+        val (pool, web) = attachedTab(capture)
+
+        pool.captureThumbnailAsync("a", window(web), bottomInsetPx = 200) {}
+        idleMain()
+
+        // 取景框跟着 WebView 的位置走（真机上它不在窗口原点），只把底边往上收。
+        val source = capture.sources.single()
+        assertThat(source).isEqualTo(Rect(10, 160, 730, 1440 - 200))
+    }
+
+    /** 抠到的是一整块底色（窗口还没画出页面）时当没拍到，别把底色当缩略图存下来。 */
+    @Test fun asyncCaptureRejectsAUniformWindow() {
+        val (pool, web) = attachedTab(FakeCapture(blank = true))
+        var captured: Bitmap? = null
+
+        pool.captureThumbnailAsync("a", window(web)) { captured = it }
+        idleMain()
+
+        assertThat(captured).isNull()
+        assertThat(pool.thumbnail("a")).isNull()
+    }
+
+    /** PixelCopy 自己失败时同样退回 `draw()`，最终没拍到就回 null。 */
+    @Test fun asyncCaptureFallsBackWhenTheCopyFails() {
+        val (pool, web) = attachedTab(FakeCapture(ok = false))
+        var called = false
+
+        pool.captureThumbnailAsync("a", window(web)) { called = true }
+        idleMain()
+
+        assertThat(called).isTrue()
+        assertThat(pool.thumbnail("a")).isNull()
+    }
+
+    /** 没有窗口（预览、单测）时不该崩，直接走同步兜底。 */
+    @Test fun asyncCaptureWithoutAWindowFallsBack() {
+        val (pool, _) = attachedTab(FakeCapture())
+        var captured: Bitmap? = null
+
+        pool.captureThumbnailAsync("a", window = null) { captured = it }
+        idleMain()
+
+        assertThat(captured).isNull()
+    }
+
+    /** 页面刚 finish 时画面还在上一帧，所以要能延后拍。 */
+    @Test fun asyncCaptureHonoursTheDelay() {
+        val (pool, web) = attachedTab(FakeCapture())
+        var captured = false
+
+        pool.captureThumbnailAsync("a", window(web), delayMs = 400) { captured = true }
+        idleMain()
+        assertThat(captured).isFalse()
+
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(400))
+        assertThat(captured).isTrue()
+    }
+
+    /**
+     * 没挂在窗口上的标签不拍。
+     *
+     * 这一条是必须的：`PixelCopy` 抠的是窗口，不管那个位置上是哪个标签的 WebView。
+     * 少了这个判断，后台标签加载完成时会把**当前显示着的**那一页存成它的缩略图。
+     */
+    @Test fun asyncCaptureSkipsDetachedTabs() {
+        val capture = FakeCapture()
+        // 有 Activity（拿得到 window），但没 setContentView——WebView 没挂上窗口。
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val pool = newCapturingPool(activity, capture, bounds = null)
+        val web = pool.get("a", false)
+        web.loadUrl("https://a.com")
+        assertThat(web.isAttachedToWindow).isFalse()
+
+        pool.captureThumbnailAsync("a", window(web)) {}
+        idleMain()
+
+        assertThat(capture.sources).isEmpty()
+        assertThat(pool.thumbnail("a")).isNull()
+    }
+
+    /** 取景范围的两个前提：挂在窗口上、且量得出尺寸。 */
+    @Test fun attachedBoundsNeedsADisplayedAndSizedView() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val web = WebView(activity)
+        assertThat(WebViewPool.attachedBounds(web)).isNull()          // 没挂到窗口上
+        activity.setContentView(web)
+        assertThat(WebViewPool.attachedBounds(web)).isNull()          // 挂了，但 Robolectric 量不出尺寸
+    }
+
+    /** 空白标签页没有内容可拍。 */
+    @Test fun asyncCaptureSkipsBlankTabs() {
+        val capture = FakeCapture()
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val pool = newCapturingPool(activity, capture)
+        val web = pool.get("a", false)
+        activity.setContentView(web)
+
+        pool.captureThumbnailAsync("a", window(web)) {}
+        idleMain()
+
+        assertThat(capture.sources).isEmpty()
     }
 }

@@ -129,4 +129,40 @@ class TabRepositoryTest {
         val t = repo.newTab("https://e.com", incognito = true)
         assertThat(repo.tabs.value.first { it.id == t.id }.isIncognito).isTrue()
     }
+
+    /**
+     * 退回首页要把地址和标题一起清掉。
+     *
+     * 标题尤其容易漏：只清地址的话，首页会顶着上一个网页的标题（标签网格里那一行）。
+     * 也正因为 `update` 的 `url ?: tab.url` 语义清不掉地址，这里才单开一个方法。
+     */
+    @Test fun goHomeClearsUrlAndTitle() {
+        val repo = TabRepository()
+        val t = repo.newTab("https://a.com")
+        repo.update(t.id, title = "某个网页")
+        repo.goHome(t.id)
+        val tab = repo.tabs.value.first { it.id == t.id }
+        assertThat(tab.isNewTab).isTrue()
+        assertThat(tab.title).isEqualTo("新标签页")
+    }
+
+    /** 退首页不该把标签变成另一种标签：无痕属性与 id 都留着。 */
+    @Test fun goHomeKeepsTheTabsIdentity() {
+        val repo = TabRepository()
+        val t = repo.newTab("https://a.com", incognito = true)
+        repo.goHome(t.id)
+        val tab = repo.tabs.value.first { it.id == t.id }
+        assertThat(tab.id).isEqualTo(t.id)
+        assertThat(tab.isIncognito).isTrue()
+    }
+
+    /** 只动指定的那个标签，别的标签的页面不该被牵连。 */
+    @Test fun goHomeLeavesOtherTabsAlone() {
+        val repo = TabRepository()
+        val a = repo.newTab("https://a.com").id
+        val b = repo.newTab("https://b.com").id
+        repo.goHome(b)
+        assertThat(repo.tabs.value.first { it.id == a }.url).isEqualTo("https://a.com")
+        assertThat(repo.tabs.value.first { it.id == b }.isNewTab).isTrue()
+    }
 }

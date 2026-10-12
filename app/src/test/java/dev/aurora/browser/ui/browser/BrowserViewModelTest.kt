@@ -64,7 +64,7 @@ class BrowserViewModelTest {
         val vm = vm()
         vm.openTabSwitcher()
         vm.openMenu()
-        assertThat(vm.onBack(canGoBack = false)).isEqualTo(BackOutcome.CLOSE_PANEL)
+        assertThat(vm.onBack(atHome = true, canGoBack = false)).isEqualTo(BackOutcome.CLOSE_PANEL)
         assertThat(vm.menuOpen.value).isFalse()
         assertThat(vm.surface.value).isEqualTo(BrowserSurface.TabSwitcher)
     }
@@ -72,15 +72,35 @@ class BrowserViewModelTest {
     @Test fun backExitsOmniboxThenUsesPageBack() {
         val vm = vm()
         vm.openOmnibox()
-        assertThat(vm.onBack(canGoBack = true)).isEqualTo(BackOutcome.EXIT_OMNIBOX)
-        assertThat(vm.onBack(canGoBack = true)).isEqualTo(BackOutcome.PAGE_BACK)
+        assertThat(vm.onBack(atHome = false, canGoBack = true)).isEqualTo(BackOutcome.EXIT_OMNIBOX)
+        assertThat(vm.onBack(atHome = false, canGoBack = true)).isEqualTo(BackOutcome.PAGE_BACK)
     }
 
     @Test fun backFromTabSwitcherReturnsToPage() {
         val vm = vm()
         vm.openTabSwitcher()
-        assertThat(vm.onBack(canGoBack = false)).isEqualTo(BackOutcome.CLOSE_PANEL)
+        assertThat(vm.onBack(atHome = true, canGoBack = false)).isEqualTo(BackOutcome.CLOSE_PANEL)
         assertThat(vm.surface.value).isEqualTo(BrowserSurface.Page)
+    }
+
+    /** 网页退到头时返回键要的是「回首页」，所以 VM 得给出 GO_HOME。 */
+    @Test fun backOnAPageWithoutHistoryGoesHome() {
+        val vm = vm()
+        vm.navigate("https://a.com")
+        assertThat(vm.activeTab.value.isNewTab).isFalse()
+        assertThat(vm.onBack(atHome = false, canGoBack = false)).isEqualTo(BackOutcome.GO_HOME)
+    }
+
+    /** 回首页把当前标签复位，并把二级界面收回去——返回键在哪儿按都该落到同一个状态。 */
+    @Test fun goHomeResetsTheActiveTab() {
+        val vm = vm()
+        vm.navigate("https://a.com")
+        vm.openSurface(BrowserSurface.Settings)
+        val id = vm.goHome()
+        assertThat(id).isEqualTo(vm.activeTab.value.id)
+        assertThat(vm.activeTab.value.isNewTab).isTrue()
+        assertThat(vm.surface.value).isEqualTo(BrowserSurface.Page)
+        assertThat(vm.menuOpen.value).isFalse()
     }
 
     @Test fun closingActiveTabKeepsActiveTabValid() {
@@ -260,7 +280,7 @@ class BrowserViewModelTest {
         )) {
             val vm = vm()
             vm.openSurface(target)
-            assertThat(vm.onBack(canGoBack = true)).isEqualTo(BackOutcome.CLOSE_PANEL)
+            assertThat(vm.onBack(atHome = false, canGoBack = true)).isEqualTo(BackOutcome.CLOSE_PANEL)
             assertThat(vm.surface.value).isEqualTo(BrowserSurface.Page)
         }
     }

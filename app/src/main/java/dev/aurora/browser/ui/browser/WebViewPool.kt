@@ -4,10 +4,13 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.net.Uri
 import android.util.Log
+import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.PermissionRequest
@@ -44,6 +47,27 @@ class WebViewPool(
      * 会永远停在创建那一刻的设置上。
      */
     private val desktopMode: () -> Boolean = { false },
+    /** 取窗口像素的方式。真机走 [PixelCopy]；单测注入假的，好在没有真实窗口的环境里也能走通这条路。 */
+    private val windowCapture: WindowCapture = WindowCapture { window, source, dest, onResult ->
+        PixelCopy.request(
+            window,
+            source,
+            dest,
+            { result -> onResult(result == PixelCopy.SUCCESS) },
+            android.os.Handler(android.os.Looper.getMainLooper()),
+        )
+    },
+    /**
+     * 取某个 WebView 在窗口里的可见范围（窗口坐标）；看不见时回 `null`。
+     *
+     * 判据是 [WebView.isAttachedToWindow]——同一时刻只有一个标签的 WebView 挂在窗口上，
+     * 没挂上去的画出来是空白，见 [captureThumbnail]。
+     *
+     * 为什么是可注入的：Robolectric 里的 `WebView` 量不出尺寸，`layout()` 对它是空操作
+     * （同一次调用加在普通 `View` 上就能拿到 720×1280），于是这条抠图路径整段都测不到。
+     * 单测注入一个固定矩形，真机走默认实现。
+     */
+    private val visibleBounds: (WebView) -> Rect? = WebViewPool.Companion::attachedBounds,
 ) {
     // 事件出口，由 BrowserScreen 每次组合刷新（见 SideEffect）。
     var onProgress: (tabId: String, progress: Int) -> Unit = { _, _ -> }
@@ -131,15 +155,19 @@ class WebViewPool(
      * 给某个标签拍一张缩略图，给标签网格用。
      *
      * 只能拍**正在显示**的那个标签：WebView 的画面由渲染进程合成，没挂在窗口上的实例
-     * 画出来是空白。所以调用时机都是「它正显示着」——打开标签网格的那一刻、切走之前。
-     * 拍过的存在 [thumbnails] 里，之后切走也能继续用。
+     * 画出来是空白。所以判据是 [WebView.isAttachedToWindow]——同一时刻只有一个标签的
+     * WebView 挂在窗口上，其余标签的图只能靠它上次显示时留下的那张。
      *
      * 失败或拍到一张纯色（没画上东西）时回 `null`，让网格退回占位图——比给用户看一块
      * 白板诚实。空白标签、还没布局过的 WebView 也都回 `null`。
+     *
+     * 这是**同步兜底**路径：走 `View.draw()`。硬件加速下 WebView 的内容在渲染进程里，
+     * `draw()` 往往画不出东西，真机请用 [captureThumbnailAsync]。
      */
     fun captureThumbnail(tabId: String): Bitmap? {
         val web = views[tabId] ?: return null
-        if (web.width <= 0 || web.height <= 0 || web.url == null) return null
+        if (web.url == null) return null
+        val bounds = visibleBounds(web) ?: return null
         val bitmap = runCatching {
             Bitmap.createBitmap(ThumbnailWidth, ThumbnailHeight, Bitmap.Config.RGB_565)
         }.getOrNull() ?: return null
@@ -147,8 +175,8 @@ class WebViewPool(
             val canvas = Canvas(bitmap)
             // 画布按缩略图尺寸缩放过，等于把整个视口缩着画进去。
             canvas.scale(
-                ThumbnailWidth.toFloat() / web.width,
-                ThumbnailHeight.toFloat() / web.height,
+                ThumbnailWidth.toFloat() / bounds.width(),
+                ThumbnailHeight.toFloat() / bounds.height(),
             )
             web.draw(canvas)
         }.isSuccess
@@ -158,6 +186,71 @@ class WebViewPool(
         }
         thumbnails.put(tabId, bitmap)
         return bitmap
+    }
+
+    /**
+     * 拍缩略图（真机走这条路）。
+     *
+     * 为什么不是 [captureThumbnail] 的 `View.draw()`：WebView 的页面由渲染进程合成，画面
+     * 不在 View 的绘制列表里，硬件加速下 `draw()` 拿到的是一张空图——这正是缩略图在真机上
+     * 一直是空白的原因。`PixelCopy` 抠的是窗口的合成结果，硬件加速也拿得到。
+     *
+     * [bottomInsetPx] 用来避开叠在网页上的悬浮工具栏：抠图抠的是窗口像素，工具栏会一起被
+     * 抠进去。缩略图本来就把整页压扁到 5:3，少一条底边不影响可辨识度。
+     *
+     * [delayMs] 给页面一点上屏时间：`onPageFinished` 那一刻画面还是上一帧。
+     * [window] 为 null（或 `PixelCopy` 失败）时退回 `View.draw()`，再不行回 `null`。
+     */
+    fun captureThumbnailAsync(
+        tabId: String,
+        window: Window?,
+        bottomInsetPx: Int = 0,
+        delayMs: Long = 0L,
+        onCaptured: (Bitmap?) -> Unit = {},
+    ) {
+        main.postDelayed({ captureNow(tabId, window, bottomInsetPx, onCaptured) }, delayMs)
+    }
+
+    private fun captureNow(
+        tabId: String,
+        window: Window?,
+        bottomInsetPx: Int,
+        onCaptured: (Bitmap?) -> Unit,
+    ) {
+        val web = views[tabId]
+        if (window == null || web == null || web.url == null) {
+            return onCaptured(captureThumbnail(tabId))
+        }
+        val bounds = visibleBounds(web) ?: return onCaptured(captureThumbnail(tabId))
+
+        val source = Rect(
+            bounds.left,
+            bounds.top,
+            bounds.right,
+            (bounds.bottom - bottomInsetPx).coerceAtLeast(bounds.top + 1),
+        )
+        val raw = runCatching {
+            Bitmap.createBitmap(source.width(), source.height(), Bitmap.Config.RGB_565)
+        }.getOrNull() ?: return onCaptured(captureThumbnail(tabId))
+
+        windowCapture.capture(window, source, raw) { ok ->
+            // 纯色同样当没拍到：窗口还没画出页面时抠到的是一整块底色。
+            val scaled = if (ok && !isBlankThumbnail(raw)) scaleToThumbnail(raw) else null
+            raw.recycle()
+            if (scaled == null) return@capture onCaptured(captureThumbnail(tabId))
+            thumbnails.put(tabId, scaled)
+            onCaptured(scaled)
+        }
+    }
+
+    /** 把整屏大小的抠图压成缩略图尺寸。尺寸恰好相同时 `createScaledBitmap` 会原样返回，得复制。 */
+    private fun scaleToThumbnail(source: Bitmap): Bitmap? {
+        if (source.width == ThumbnailWidth && source.height == ThumbnailHeight) {
+            return runCatching { source.copy(Bitmap.Config.RGB_565, false) }.getOrNull()
+        }
+        return runCatching {
+            Bitmap.createScaledBitmap(source, ThumbnailWidth, ThumbnailHeight, true)
+        }.getOrNull()
     }
 
     /** 上次拍到的缩略图；没拍过（或拍出来是空白）时为 null。 */
@@ -249,6 +342,19 @@ class WebViewPool(
          */
         internal const val ThumbnailWidth = 320
         internal const val ThumbnailHeight = 192
+
+        /**
+         * 默认的取景范围：WebView 挂在窗口上时是它自己的位置和尺寸，否则看不见。
+         *
+         * 抽出来是为了能单独测「没挂窗口就不拍」这一条——那是 [captureThumbnailAsync] 唯一
+         * 不能出错的前提（`PixelCopy` 抠的是窗口，不管那个位置上是哪个标签）。
+         */
+        internal fun attachedBounds(web: WebView): Rect? {
+            if (!web.isAttachedToWindow || web.width <= 0 || web.height <= 0) return null
+            val location = IntArray(2)
+            web.getLocationInWindow(location)
+            return Rect(location[0], location[1], location[0] + web.width, location[1] + web.height)
+        }
 
         /** 判断空白缩略图时每条边抽多少个点。 */
         private const val BlankSampleGrid = 12
@@ -507,4 +613,14 @@ private fun applyHardenedSettings(webView: WebView, incognito: Boolean) {
 
     // 第三方 Cookie 一律不发给跨站请求，减少跨站追踪面。
     runCatching { CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false) }
+}
+
+/**
+ * 从窗口里抠一块像素出来。
+ *
+ * 抽成接口只为一件事：`PixelCopy` 需要真实窗口，单测里没有。注入一个假的就能把
+ * 「算取景框 → 抠图 → 判空白 → 缩放 → 存缓存」这条路走通，而不用去凑一个真窗口。
+ */
+fun interface WindowCapture {
+    fun capture(window: Window, source: Rect, dest: Bitmap, onResult: (Boolean) -> Unit)
 }

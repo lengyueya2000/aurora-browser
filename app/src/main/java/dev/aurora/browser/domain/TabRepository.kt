@@ -52,6 +52,20 @@ class TabRepository {
         if (_tabs.value.any { it.id == id }) _activeId.value = id
     }
 
+    /**
+     * 把标签退回首页（新标签页状态）。
+     *
+     * 这里换一个新的 [BrowserTab] 而不是 `copy(url = null)`：[update] 的 `url ?: tab.url` 表示
+     * 「没传就不改」，`null` 在那里是「保持原样」，用它清不掉地址。标题也得一起复位，否则首页
+     * 会顶着上一个网页的标题。无痕属性与分组保留——退首页不该把标签变成另一种标签。
+     */
+    fun goHome(id: String) {
+        _tabs.value = _tabs.value.map { tab ->
+            if (tab.id != id) tab
+            else BrowserTab(id = tab.id, isIncognito = tab.isIncognito, groupId = tab.groupId)
+        }
+    }
+
     fun update(id: String, url: String? = null, title: String? = null) {
         _tabs.value = _tabs.value.map { tab ->
             if (tab.id != id) tab
