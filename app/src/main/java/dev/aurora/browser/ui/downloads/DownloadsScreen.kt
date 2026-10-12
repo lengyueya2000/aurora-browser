@@ -228,7 +228,7 @@ private fun DownloadRowItem(row: DownloadRow) {
 private fun statusLine(item: DownloadItem): String = when {
     item.isSuccess ->
         DownloadsRepository.formatSize(item.totalBytes.takeIf { it > 0 } ?: item.bytesDownloaded)
-    item.isRunning -> progressLine(
+    item.isRunning -> DownloadsRepository.formatProgress(
         downloaded = item.bytesDownloaded,
         total = item.totalBytes,
         percent = item.progress * 100f,
@@ -241,7 +241,7 @@ private fun statusLine(item: DownloadItem): String = when {
 private fun offlineStatusLine(item: OfflineItem): String = when {
     item.isCompleted -> "离线缓存 · ${DownloadsRepository.formatSize(item.bytes)}"
     item.isFailed -> "离线缓存失败"
-    item.bytes > 0 || item.speed > 0 -> "离线缓存 · " + progressLine(
+    item.bytes > 0 || item.speed > 0 -> "离线缓存 · " + DownloadsRepository.formatProgress(
         downloaded = item.bytes,
         total = item.totalBytes,
         percent = item.percent,
@@ -249,28 +249,4 @@ private fun offlineStatusLine(item: OfflineItem): String = when {
         approxTotal = true,
     )
     else -> "离线缓存中…"
-}
-
-/**
- * 「已下载 / 总大小 · 速度」。
- *
- * 总大小和速度都可能是「还不知道」：HLS 的总长度要下完才知道，这里是从已完成比例反推的，
- * 所以带个「约」；速度要两次采样才算得出来。不知道的那段整段省掉——写「0 B/s」看起来像
- * 卡住了，其实只是还没测出来。总大小还估不出来时改报百分比，否则看不出还剩多少。
- */
-private fun progressLine(
-    downloaded: Long,
-    total: Long,
-    percent: Float,
-    speed: Long,
-    approxTotal: Boolean,
-): String {
-    val size = if (total > 0) {
-        val prefix = if (approxTotal) "约 " else ""
-        "${DownloadsRepository.formatSize(downloaded)} / $prefix${DownloadsRepository.formatSize(total)}"
-    } else {
-        val pct = if (percent > 0f && percent < 100f) " · ${percent.toInt()}%" else ""
-        DownloadsRepository.formatSize(downloaded) + pct
-    }
-    return if (speed > 0) "$size · ${DownloadsRepository.formatSize(speed)}/s" else size
 }

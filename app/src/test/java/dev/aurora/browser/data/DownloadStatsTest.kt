@@ -66,6 +66,27 @@ class DownloadStatsTest {
         assertThat(speed.sample("a", bytes = 2_000L, nowMs = 2_000L)).isEqualTo(1_000L)
     }
 
+    /**
+     * 真机回归：离线缓存（Media3）的速度一直显示 0。
+     *
+     * `DownloadManager` 每 5 秒才把进度写进索引一次（它内部的 `UPDATE_PROGRESS_INTERVAL_MS`），
+     * 所以哪怕每 500 毫秒去读一次，「已下载字节」也只每 5 秒变一次。默认的 3 秒窗口在这种
+     * 节奏下永远只有一个样本：新的那个一进来，旧的就出了窗口。
+     */
+    @Test fun aFiveSecondProgressCadenceNeedsAWiderWindowThanTheDefault() {
+        fun bytesAt(ms: Long) = ms / 5_000L * 50_000_000L
+
+        val tooNarrow = DownloadSpeed()
+        var last = 0L
+        for (ms in 0L..30_000L step 500L) last = tooNarrow.sample("a", bytesAt(ms), ms)
+        assertThat(last).isEqualTo(0L)
+
+        // 11 秒窗口（离线缓存用的那个）：两次落库就能出数。
+        val offline = DownloadSpeed(windowMs = 11_000L, minSampleMs = 4_000L)
+        for (ms in 0L..30_000L step 500L) last = offline.sample("a", bytesAt(ms), ms)
+        assertThat(last).isEqualTo(10_000_000L) // 50 MB / 5 秒
+    }
+
     @Test fun keysAreIndependent() {
         val speed = DownloadSpeed()
         speed.sample("a", bytes = 0L, nowMs = 0L)

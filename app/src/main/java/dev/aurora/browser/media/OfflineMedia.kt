@@ -2,6 +2,7 @@ package dev.aurora.browser.media
 
 import android.content.Context
 import android.os.SystemClock
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
@@ -40,8 +41,17 @@ object OfflineMedia {
     /** 缓存目录名。换名字等于让老用户的离线缓存凭空消失，别改。 */
     private const val CACHE_DIR = "offline_media"
 
-    /** 下载并行的分片数。HLS 是一堆小文件，几条并发就够，再多只是抢带宽。 */
-    private const val DOWNLOAD_THREADS = 3
+    /**
+     * 下载并行的分片数。
+     *
+     * 这个数**就是**多线程下载本身：Media3 的 `SegmentDownloader` 会把分片一个接一个丢给
+     * 我们给它的这个 executor（`download()` 是 final 的，改不了它的循环，只能改池子大小），
+     * 池里有几条线程就有几个分片同时在拉。单条连接常常跑不满带宽，几条并发叠起来明显更快。
+     *
+     * 上限别太大：手机网络下并发太多会互相抢带宽、也更容易被 CDN 判定成异常流量。
+     * 另外这几条线程是所有离线缓存共享的——同时下两三部片子时，每部能分到的并发会变少。
+     */
+    private const val DOWNLOAD_THREADS = 8
 
     private const val TITLE_PREFS = "aurora_offline_titles"
 
@@ -54,8 +64,18 @@ object OfflineMedia {
     /**
      * 速度计。速度问不出来，只能按「已下载字节」的变化自己采样，所以它必须活过单次
      * [items] 调用——每次刷新都新建一个的话，永远只有一次采样，速度永远是 0。
+     *
+     * 窗口必须比 Media3 的进度落库间隔长。`DownloadManager` 里的
+     * `UPDATE_PROGRESS_INTERVAL_MS = 5000`：**它每 5 秒才把已下载字节写进索引一次**，
+     * 我们读到的那个数就只每 5 秒变一次。用默认的 3 秒窗口永远凑不齐两个不同的样本
+     * （新样本一进来，旧样本已经出了窗口），速度会一直显示 0——真机上就是这样，
+     * 明明在下、下得还挺快，界面上却一个速度都没有。
+     *
+     * 于是这里取 11 秒窗口：两次落库（5 秒）就能出数，之后是 10 秒左右的滑动平均。
+     * 代价是迟钝——速度突变要十几秒才反映出来；换来的是不跳、可读。
+     * 直链那条路（系统下载器，[DownloadsRepository]）字节是连续更新的，仍用默认窗口。
      */
-    private val speed = DownloadSpeed()
+    private val speed = DownloadSpeed(windowMs = 11_000L, minSampleMs = 4_000L)
 
     /**
      * 最近一次入队那条流的页面地址。
@@ -143,7 +163,20 @@ object OfflineMedia {
     fun enqueue(context: Context, url: String, title: String, referer: String? = null) {
         rememberTitle(context, url, title)
         if (!referer.isNullOrBlank()) pendingReferer = referer
-        val request = DownloadRequest.Builder(url, android.net.Uri.parse(url)).build()
+        val request = DownloadRequest.Builder(url, android.net.Uri.parse(url))
+            // 必须显式给 MIME：不给的话 Media3 只看地址推断，而嗅探收进来的播放列表地址
+            // 未必带扩展名（`/m3u8/<hash>`、`/play?url=xxx.m3u8`）。那种地址会被当成
+            // 直链，Media3 拿 `ProgressiveDownloader` 把播放列表文本当视频存下来——几 KB
+            // 的「文件」，离线播不了。给了 MIME 就走 [MediaUrls.isStream] 同一把尺子。
+            .setMimeType(
+                when {
+                    MediaUrls.isHls(url) -> MimeTypes.APPLICATION_M3U8
+                    MediaUrls.isPlaylist(url) -> MimeTypes.APPLICATION_MPD
+                    // 不是播放列表：交给 Media3 自己按地址推断，别替它猜错。
+                    else -> null
+                },
+            )
+            .build()
         runCatching {
             DownloadService.sendAddDownload(
                 context,

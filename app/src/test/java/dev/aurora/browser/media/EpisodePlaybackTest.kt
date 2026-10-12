@@ -7,10 +7,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * 播放器里的选集状态：下一集是哪一集、标题怎么显示。
+ * 播放器里的选集状态：上一集 / 下一集是哪一集、标题怎么显示。
  *
- * 重点钉住两个容易写错的地方：当前集不在列表里（`index = -1`）时下一集仍应是第 0 集；
- * 最后一集不能再给出下一集。
+ * 重点钉住几个容易写错的地方：当前集不在列表里（`index = -1`）时下一集仍应是第 0 集，
+ * 但上一集该是「没有」；最后一集不能再给出下一集，第一集不能再给出上一集。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -71,6 +71,41 @@ class EpisodePlaybackTest {
         val p = EpisodePlayback.of(EpisodeList("剧", emptyList(), -1), autoNext = true)
         assertThat(p.hasEpisodes).isFalse()
         assertThat(p.next).isNull()
+    }
+
+    // ── 上一集 ─────────────────────────────────────────────────
+
+    @Test fun prevIsTheEpisodeBefore() {
+        val p = EpisodePlayback.of(show, autoNext = true).withIndex(2)
+        assertThat(p.prevIndex).isEqualTo(1)
+        assertThat(p.prev?.url).isEqualTo("https://a.com/player/vod/1-82861-2.html")
+    }
+
+    @Test fun theFirstEpisodeHasNoPrev() {
+        val p = EpisodePlayback.of(show, autoNext = true).withIndex(0)
+        assertThat(p.prevIndex).isNull()
+        assertThat(p.prev).isNull()
+    }
+
+    /**
+     * 当前页不在列表里时**不**给上一集。
+     *
+     * 与 [anUnlistedCurrentEpisodeFallsBackToTheFirstEntry] 的「下一集退回第 0 集」是刻意
+     * 不对称的：往后走总有起点，往前走没有，蒙一个会把用户送到别的地方。
+     */
+    @Test fun anUnlistedCurrentEpisodeHasNoPrev() {
+        val p = EpisodePlayback.of(show, autoNext = true).withIndex(-1)
+        assertThat(p.prevIndex).isNull()
+        assertThat(p.prev).isNull()
+    }
+
+    @Test fun anOutOfRangeIndexHasNoPrev() {
+        assertThat(EpisodePlayback.of(show, autoNext = true).withIndex(9).prevIndex).isNull()
+    }
+
+    @Test fun aSingleVideoHasNoPrev() {
+        assertThat(EpisodePlayback.Single.prevIndex).isNull()
+        assertThat(EpisodePlayback.Single.prev).isNull()
     }
 
     // ── 标题 ───────────────────────────────────────────────────

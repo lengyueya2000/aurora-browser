@@ -28,6 +28,13 @@ data class DownloadItem(
     val reason: Int,
     /** 字节/秒。0 表示「还不知道」（刚入队，或者已经停下）。 */
     val speed: Long = 0L,
+    /**
+     * 这条下的是哪个地址。
+     *
+     * 播放器要拿它认领「正在播的这个视频的下载」：列表里只有标题，而标题是文件名，
+     * 跟页面上的地址对不上。
+     */
+    val uri: String? = null,
 ) {
     val isRunning: Boolean get() = status == DownloadManager.STATUS_RUNNING ||
         status == DownloadManager.STATUS_PENDING || status == DownloadManager.STATUS_PAUSED
@@ -96,6 +103,7 @@ class DownloadsRepository(private val context: Context) {
             val totalCol = c.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
             val mimeCol = c.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
             val reasonCol = c.getColumnIndex(DownloadManager.COLUMN_REASON)
+            val uriCol = c.getColumnIndex(DownloadManager.COLUMN_URI)
             buildList {
                 while (c.moveToNext()) {
                     val id = if (idCol >= 0) c.getLong(idCol) else 0L
@@ -111,6 +119,7 @@ class DownloadsRepository(private val context: Context) {
                             reason = if (reasonCol >= 0) c.getInt(reasonCol) else 0,
                             // 每次查询都记一次采样：两次查询之间隔了多久，速度就按多久算。
                             speed = speed.sample("file-$id", soFar, now),
+                            uri = if (uriCol >= 0) c.getString(uriCol) else null,
                         ),
                     )
                 }
@@ -135,6 +144,33 @@ class DownloadsRepository(private val context: Context) {
         fun deriveFileName(url: String, contentDisposition: String?, mimeType: String?): String =
             URLUtil.guessFileName(url, contentDisposition, mimeType)?.takeIf { it.isNotBlank() }
                 ?: "download"
+
+        /**
+         * 「已下载 / 总大小 · 速度」。
+         *
+         * 总大小和速度都可能是「还不知道」：HLS 的总长度要下完才知道，这里是从已完成比例
+         * 反推的，所以带个「约」；速度要两次采样才算得出来。不知道的那段整段省掉——写
+         * 「0 B/s」看起来像卡住了，其实只是还没测出来。总大小还估不出来时改报百分比，
+         * 否则看不出还剩多少。
+         *
+         * @param approxTotal 总大小是不是反推出来的（HLS 是，直链不是）。
+         */
+        fun formatProgress(
+            downloaded: Long,
+            total: Long,
+            percent: Float,
+            speed: Long,
+            approxTotal: Boolean,
+        ): String {
+            val size = if (total > 0) {
+                val prefix = if (approxTotal) "约 " else ""
+                "${formatSize(downloaded)} / $prefix${formatSize(total)}"
+            } else {
+                val pct = if (percent > 0f && percent < 100f) " · ${percent.toInt()}%" else ""
+                formatSize(downloaded) + pct
+            }
+            return if (speed > 0) "$size · ${formatSize(speed)}/s" else size
+        }
 
         /** 人类可读的体积，用于列表展示。 */
         fun formatSize(bytes: Long): String = when {

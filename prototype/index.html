@@ -1038,7 +1038,7 @@ LazyColumn(<br>
 <!-- ───────────── 09 下载管理 ───────────── -->
 <div class="frame-wrap">
   <div class="frame-cap"><span class="n">09</span><span class="t">下载管理 · 已下载 / 总大小 / 速度</span>
-    <span class="d">直链文件与离线缓存合成一张列表；页面开着时每 0.5 秒刷新</span></div>
+    <span class="d">直链文件与离线缓存合成一张列表；页面开着时每 0.5 秒刷新。离线缓存的速度用 11 秒窗口采样（Media3 每 5 秒才落一次进度，3 秒窗口永远凑不出两个样本），HLS 分片 8 路并发</span></div>
   <div class="phone">
     <div class="statusbar"><span>9:41</span>
       <span class="sb-right">
@@ -1338,7 +1338,7 @@ LazyColumn(<br>
 
 <!-- ───────────── 14 播放器控制层 ───────────── -->
 <style>
-  .pl-box{position:relative;aspect-ratio:16/9;overflow:hidden;
+  .pl-box{position:relative;aspect-ratio:16/9;overflow:hidden;flex:0 0 auto;
     background:radial-gradient(120% 90% at 30% 20%, #334155 0%, #0B1120 72%)}
   .pl-scrim{position:absolute;inset:0;background:rgba(2,6,23,.72)}
   .pl-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:8px;padding:8px 12px}
@@ -1360,7 +1360,20 @@ LazyColumn(<br>
   .pl-track i{position:absolute;left:0;top:0;bottom:0;width:38%;border-radius:var(--radius-full);background:var(--color-brand)}
   .pl-track b{position:absolute;left:38%;top:50%;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;
     border-radius:var(--radius-full);background:var(--color-brand)}
-  .pl-chips{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
+  .pl-chips{display:flex;gap:8px;margin-top:10px;align-items:center}
+  .pl-chips .grow{flex:1 1 auto}
+  /* 这一屏多了左下角两颗（上一集 / 下一集），412px 的画框里要挤下 6 颗，收一点间距。 */
+  .pl-chips.tight{gap:5px}
+  .pl-chips.tight .pl-chip{padding:0 9px;font-size:11px}
+  .pl-chips.tight .pl-chip.off{opacity:.45}
+  /* 左下角常驻的下载状态：一行字 + 细进度条，独立于控制层，不随控制层自动收起。
+     位置贴着进度条上沿——真机上它由 BOTTOM_CHIPS_CLEARANCE 抬起，这里按同一比例落。 */
+  .pl-dl{position:absolute;left:12px;bottom:60px;max-width:66%;
+    background:rgba(15,23,42,.74);border-radius:10px;padding:6px 10px;
+    display:flex;flex-direction:column;gap:4px}
+  .pl-dl .t{font-size:10px;color:var(--color-text);white-space:nowrap}
+  .pl-dl .bar{height:3px;border-radius:2px;background:rgba(148,163,184,.35);overflow:hidden}
+  .pl-dl .bar i{display:block;height:100%;background:var(--color-brand);border-radius:2px}
   .pl-chip{height:26px;line-height:26px;padding:0 12px;border-radius:var(--radius-full);
     font-size:12px;color:var(--color-text);background:rgba(27,35,54,.72)}
   .pl-chip.on{color:var(--color-brand);background:rgba(39,47,66,.9)}
@@ -1369,8 +1382,8 @@ LazyColumn(<br>
   .pl-hint .h2{font-size:11px;color:var(--color-text-muted);margin-top:2px}
 </style>
 <div class="frame-wrap">
-  <div class="frame-cap"><span class="n">14</span><span class="t">播放器控制层 · 小窗 / 投屏 / 下载 / 清晰度 / 倍速 / 画面比例</span>
-    <span class="d">按钮按单手能够到的位置排：右上 小窗·投屏，右侧中间 下载，右下 倍速·画质·适应·退出全屏</span></div>
+  <div class="frame-cap"><span class="n">14</span><span class="t">播放器控制层 · 小窗 / 投屏 / 下载 / 清晰度 / 倍速 / 画面比例 / 上一集 · 下一集</span>
+    <span class="d">按钮按单手能够到的位置排：右上 小窗·投屏，右侧中间 下载，左下 上一集·下一集，右下 倍速·画质·适应·退出全屏；左下角另有一条常驻的下载状态</span></div>
   <div class="phone">
     <div class="statusbar"><span>9:41</span>
       <span class="sb-right">
@@ -1390,11 +1403,18 @@ LazyColumn(<br>
         <div class="pl-mid">
           <span class="pl-tb">−10s</span><span class="pl-play"></span><span class="pl-tb">+10s</span>
         </div>
+        <div class="pl-dl">
+          <span class="t">正在离线缓存 · 468.2 MB / 约 917.0 MB · 9.3 MB/s</span>
+          <span class="bar"><i style="width:51%"></i></span>
+        </div>
         <div class="pl-bottom">
           <div class="pl-seek"><span>12:34</span>
             <span class="pl-track"><i></i><b></b></span>
             <span>1:02:05</span></div>
-          <div class="pl-chips">
+          <div class="pl-chips tight">
+            <span class="pl-chip off">上一集</span>
+            <span class="pl-chip">下一集</span>
+            <span class="grow"></span>
             <span class="pl-chip">1.0x</span>
             <span class="pl-chip on">1080P</span>
             <span class="pl-chip">适应</span>
@@ -1406,7 +1426,9 @@ LazyColumn(<br>
         <div class="pl-hint">
           <div class="h1">亮度 62%</div><div class="h2">左半屏上下滑调亮度</div>
         </div>
-        <div class="vf-note" style="margin:12px 0 0">位置：<b>右上角</b>小窗 / 投屏（都是「把画面交出去」），<b>右侧中间</b>下载（单独一列，不与中间的播放键抢位置），<b>右下角</b>一排倍速 · 画质 · 适应 · 退出全屏（拇指自然落点），底部进度条占满宽度。小窗宽高比先夹到系统允许的 1/2.39–2.39——竖屏短剧的比例会越界，越界时系统直接抛异常，真机上表现为「点了没反应」；小窗里控制层与手势整层让开，否则会盖住系统的展开/关闭按钮。</div>
+        <div class="vf-note" style="margin:12px 0 0">位置：<b>右上角</b>小窗 / 投屏（都是「把画面交出去」），<b>右侧中间</b>下载（单独一列，不与中间的播放键抢位置），<b>左下角</b>上一集 / 下一集（左组占满剩余宽度，把右组推到末尾），<b>右下角</b>一排倍速 · 画质 · 适应 · 退出全屏（拇指自然落点），底部进度条占满宽度。小窗宽高比先夹到系统允许的 1/2.39–2.39——竖屏短剧的比例会越界，越界时系统直接抛异常，真机上表现为「点了没反应」；小窗里控制层与手势整层让开，否则会盖住系统的展开/关闭按钮。</div>
+        <div class="vf-note" style="margin:8px 0 0">左下角那条<b>下载状态</b>（图上「正在离线缓存 · 468.2 MB / 约 917.0 MB · 9.3 MB/s」）不随控制层自动收起——控制层 3.5 秒后隐，这条留着，否则「下载进度」只在用户刚好点出控制层时才看得见。它认的是<b>正在播的这个地址</b>（下载列表里只有标题，标题是文件名，跟页面地址对不上），下完了还会留一会儿，免得用户盯着它到 100% 时那一行毫无预告地消失。速度那一格只有离线缓存要特殊对待：Media3 每 5 秒才把已下载字节写进索引一次，所以离线缓存用 11 秒窗口采样，直链文件仍用 3 秒。</div>
+        <div class="vf-note" style="margin:8px 0 0">「上一集 / 下一集」与选集面板里点某一集走<b>同一条</b>路径（同一个 <code>onPickEpisode(index)</code>），这样「切集后按新集地址重查进度」之类的规则只有一处需要维护。单集视频不显示这一组；首集的「上一集」、末集的「下一集」置灰（用 <code>clickable(enabled = false)</code>，读屏也念得出「已禁用」）。</div>
         <div class="vf-note" style="margin:8px 0 0">清晰度面板列出 <code>master.m3u8</code> 里的各档（1080P / 720P / 480P），选「自动」交回播放器按网速自己切。同一清晰度有多条轨道（avc1 与 hevc）时只留码率最高的那条——否则面板上会出现一排「1080P」。</div>
         <div class="vf-note" style="margin:8px 0 16px">手势：左半屏上下滑调亮度、右半屏调音量、横向拖看进度（拖动中只预览，抬手才跳）、双击左右半屏进退 10 秒、单击显隐控制层。播放进度与倍速都会记住，下次接着看——看得不足 5 秒或离结尾不足 30 秒不记。</div>
       </div>

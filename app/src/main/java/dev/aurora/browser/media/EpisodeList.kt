@@ -51,6 +51,10 @@ data class EpisodeList(
  *
  * 门槛取严（同簇 ≥ [MIN_CLUSTER] 条且必须包含当前页）是有意的：把「相关推荐」误判成选集，
  * 后果是面板里冒出一堆不相关的集——不至于坏，但很难看，用户会以为功能是坏的。宁可漏，不可错。
+ *
+ * 主键法有一条明摆着的盲区：**地址是不透明 ID 的站点**（4kvm.net 的 `/play/ch4k8uf4p`、
+ * 爱奇艺的 `/v_xxxxx.html`）——同一部剧的每一集地址之间没有任何共性，主键各不相同，
+ * 分不出簇。这类站点只能靠「链接自己标明是选集」这条退路，见 [clusterByEpisodeMark]。
  */
 object EpisodeCodec {
 
@@ -71,7 +75,7 @@ object EpisodeCodec {
     /**
      * 把脚本回传的候选解析成一部剧。
      *
-     * @param raw `evaluateJavascript` 的返回值：`[{href, text, inList}, …]`。
+     * @param raw `evaluateJavascript` 的返回值：`[{href, text, inList, ep}, …]`。
      * @return 判不出剧集时返回 `null`——调用方据此当成单集视频，一切照旧。
      */
     fun parse(raw: String?, pageUrl: String, pageTitle: String): EpisodeList? {
@@ -89,13 +93,24 @@ object EpisodeCodec {
                 href = href,
                 text = o.optString("text").trim().take(24),
                 inList = o.optBoolean("inList"),
+                ep = o.optBoolean("ep"),
             )
         }
         return build(candidates, pageUrl, pageTitle)
     }
 
-    /** 候选链接。`inList` 表示脚本判定它落在疑似选集容器里。 */
-    internal data class Candidate(val href: String, val text: String, val inList: Boolean)
+    /**
+     * 候选链接。
+     *
+     * @param inList 脚本判定它落在疑似选集容器里。
+     * @param ep 脚本判定它**自己**标明了「这是第几集」（同一记号全页 ≥ 3 条）。
+     */
+    internal data class Candidate(
+        val href: String,
+        val text: String,
+        val inList: Boolean,
+        val ep: Boolean = false,
+    )
 
     internal fun build(candidates: List<Candidate>, pageUrl: String, pageTitle: String): EpisodeList? {
         val page = runCatching { URI(pageUrl) }.getOrNull() ?: return null
@@ -107,16 +122,19 @@ object EpisodeCodec {
         val seen = HashSet<String>()
         val resolved = ArrayList<Episode>(candidates.size)
         val flags = ArrayList<Boolean>(candidates.size)
+        val marks = ArrayList<Boolean>(candidates.size)
         for (c in candidates) {
             val url = resolve(page, c.href) ?: continue
             if (!seen.add(url)) continue
             resolved += Episode(label = c.text.ifBlank { labelOf(url) }, url = url)
             flags += c.inList
+            marks += c.ep
         }
         if (resolved.size < MIN_CLUSTER) return null
 
         val pick = clusterByMainKey(resolved, flags, pageUrl)
             ?: clusterByQueryParam(resolved, flags, page)
+            ?: clusterByEpisodeMark(resolved, marks)
             ?: return null
         val episodes = pick.take(MAX_EPISODES)
         val current = episodes.indexOfFirst { normalize(it.url) == pageKey }
@@ -182,6 +200,28 @@ object EpisodeCodec {
         return sort(samePath.map { resolved[it] })
     }
 
+    /**
+     * 自我标明的选集：站点给每条链接自己打了「这是第几集」的记号，而地址之间毫无共性。
+     *
+     * 4kvm.net 就是标准样子——47 条 `<a href="/play/ch4k8uf4p" class="episode-link"
+     * data-episode="1">`，每一集的 ID 都是不透明串，主键法只能分出一条一条的独苗。
+     * 爱奇艺的 `/v_xxxxx.html` 同理。
+     *
+     * 门槛两条：带记号的 ≥ [MIN_CLUSTER] 条，且其中能读出集号的**不同**集号也 ≥
+     * [MIN_CLUSTER] 个。第二条是必须的——面板里排不出顺序的一堆格子还不如不给面板
+     * （规格 §2.2「不做猜测」）。集号取不到时（地址没数字、标签也不是数字）就认输。
+     *
+     * 这是三条路里最弱的一条（记号是站点自己写的，我们只是照信），所以排在主键法与
+     * 查询串法之后：前两条能判出来时，说明地址本身就有结构，那个证据比记号硬。
+     */
+    private fun clusterByEpisodeMark(resolved: List<Episode>, marks: List<Boolean>): List<Episode>? {
+        val hits = resolved.filterIndexed { i, _ -> marks[i] }
+        if (hits.size < MIN_CLUSTER) return null
+        val numbers = hits.map { episodeNumber(it.url, it.label) }
+        if (numbers.filterNotNull().distinct().size < MIN_CLUSTER) return null
+        return sort(hits)
+    }
+
     /** 按集号排；取不到集号的排到最后，保持原有文档顺序（稳定排序）。 */
     private fun sort(episodes: List<Episode>): List<Episode> =
         episodes.sortedBy { episodeNumber(it.url, it.label) ?: Int.MAX_VALUE }
@@ -203,14 +243,35 @@ object EpisodeCodec {
         return key.ifBlank { null }
     }
 
-    /** 集号：先看 URL 末段的尾部数字，再退到标签里的第一个数字。 */
-    internal fun episodeNumber(url: String, label: String): Int? {
-        val segment = lastSegment(url)
-        val fromUrl = segment?.let { TRAILING_DIGITS.find(it) }
-            ?.groupValues?.get(1)?.toIntOrNull()
-        if (fromUrl != null) return fromUrl
+    /**
+     * 集号：**标签优先**，标签里读不出来才退回地址。
+     *
+     * 顺序反过来的话，地址是不透明 ID 的站点会全线读错：4kvm.net 的
+     * `/play/ch4k8uf55` 是第 **2** 集，末尾那个 `55` 只是 ID 的两位，跟集号毫无关系。
+     * 而站点写在标签里的「第 2 集」「EP02」「E2」「S01E02」是它自己给出的直接证据。
+     *
+     * 标签里确实读不出数字（「播放」「正片」「HD」）时才用地址末段的尾部数字——
+     * 那是 `/player/vod/1-82861-3.html` 这类站点的证据。
+     */
+    internal fun episodeNumber(url: String, label: String): Int? =
+        labelNumber(label) ?: urlNumber(url)
+
+    /**
+     * 标签里的集号。
+     *
+     * 先找「第 N 集 / 話 / 话」这种带量词的写法（`第2季 第3集` 要读 3 不是 2），
+     * 再找 `第 N` / `EP N` / `S01E02` / `E2` 这些前缀写法，最后才退到标签里的第一个数字。
+     */
+    internal fun labelNumber(label: String): Int? {
+        LABEL_EPISODE.find(label)?.let { return it.groupValues[1].toIntOrNull() }
+        LABEL_PREFIX.find(label)?.let { return it.groupValues[1].toIntOrNull() }
         return DIGITS.find(label)?.groupValues?.get(1)?.toIntOrNull()
     }
+
+    /** 地址末段的尾部数字。 */
+    private fun urlNumber(url: String): Int? =
+        lastSegment(url)?.let { TRAILING_DIGITS.find(it) }
+            ?.groupValues?.get(1)?.toIntOrNull()
 
     /**
      * 剧名：从页面标题里削掉集号与站名后缀。削没了就退回 host。
@@ -305,6 +366,12 @@ object EpisodeCodec {
 
     private val DIGITS = Regex("(\\d+)")
 
+    /** 标签里的集号：「第 N 集 / 話 / 话」。 */
+    private val LABEL_EPISODE = Regex("第\\s*(\\d+)\\s*[集話话]")
+
+    /** 标签里的集号：`第 N` / `EP N` / `S01E02` / `E2`。 */
+    private val LABEL_PREFIX = Regex("(?i)(?:第|EP|S\\d+\\s*E|E)\\s*(\\d+)")
+
     /** 标题里的集号与站名后缀。 */
     private val NOISE = listOf(
         Regex("第\\s*\\d+\\s*[集話话]"),
@@ -318,7 +385,7 @@ object EpisodeCodec {
         Regex("_?完整版"),
         Regex("_?高清"),
         Regex("_?免费"),
-        Regex("-\\s*[^-]{2,12}影院"),
+        Regex("-\\s*[^-]{2,12}影(院|视)"),
     )
 
     private val TRIM_CHARS = charArrayOf(

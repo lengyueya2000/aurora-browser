@@ -38,10 +38,18 @@ class EpisodeCodecTest {
         assertThat(EpisodeCodec.mainKey("https://a.com/e/ep-12")).isEqualTo("ep-#")
     }
 
-    @Test fun episodeNumberPrefersTheUrlThenTheLabel() {
+    @Test fun episodeNumberComesFromTheLabelThenTheUrl() {
         assertThat(EpisodeCodec.episodeNumber("https://a.com/p/1-82861-7.html", "第 7 集")).isEqualTo(7)
         assertThat(EpisodeCodec.episodeNumber("https://a.com/play", "第 3 集")).isEqualTo(3)
         assertThat(EpisodeCodec.episodeNumber("https://a.com/play", "EP05")).isEqualTo(5)
+        // 标签里的前缀写法：S01E03 是第 3 集，不是第 1 集。
+        assertThat(EpisodeCodec.episodeNumber("https://a.com/play", "S01E03")).isEqualTo(3)
+        // 「第2季 第3集」读 3 不读 2——带「集」的那个才是集号。
+        assertThat(EpisodeCodec.episodeNumber("https://a.com/play", "第2季 第3集")).isEqualTo(3)
+        // 标签优先：地址末尾的 55 是 ID 的一部分（4kvm 的 ch4k8uf55 是第 2 集）。
+        assertThat(EpisodeCodec.episodeNumber("https://4kvm.net/play/ch4k8uf55", "2")).isEqualTo(2)
+        // 标签读不出数字时才退回地址。
+        assertThat(EpisodeCodec.episodeNumber("https://a.com/p/1-82861-7.html", "播放")).isEqualTo(7)
         assertThat(EpisodeCodec.episodeNumber("https://a.com/play", "简介")).isNull()
     }
 
@@ -141,6 +149,102 @@ class EpisodeCodecTest {
         assertThat(EpisodeCodec.parse(raw, "https://a.com/p/ch4k8uf4p", "电影")).isNull()
     }
 
+    // ── 自我标明的选集（地址是不透明 ID 的站点）─────────────────
+
+    /** 带 `ep` 标记的候选。`ep` 是脚本侧「这条链接自己标明了是第几集」的结论。 */
+    private fun marked(vararg rows: Triple<String, String, Boolean>): String =
+        rows.joinToString(prefix = "[", postfix = "]") { (href, text, ep) ->
+            """{"href":"$href","text":"$text","inList":false,"ep":$ep}"""
+        }
+
+    @Test fun opaqueEpisodeIdsAreClusteredByTheSelfMarkedLinks() {
+        // 4kvm.net 的样子：47 条 /play/<不透明串>，地址之间毫无共性，主键法只能分出一条条独苗。
+        // 站点自己给每条链接打了 data-episode / class="episode-link"，这是唯一的证据。
+        val raw = marked(
+            Triple("/play/ch4k8uf4p", "1", true),
+            Triple("/play/ch4k8uf55", "2", true),
+            Triple("/play/ch4k8uf5l", "3", true),
+            Triple("/play/ch4k8uf61", "4", true),
+        )
+        val list = EpisodeCodec.parse(raw, "https://4kvm.net/play/ch4k8uf4p", "兰香如故 - 第1集 -4k影视")
+        assertThat(list).isNotNull()
+        assertThat(list!!.episodes.map { it.label }).containsExactly("1", "2", "3", "4").inOrder()
+        assertThat(list.currentIndex).isEqualTo(0)
+        assertThat(list.seriesTitle).isEqualTo("兰香如故")
+    }
+
+    @Test fun selfMarkedLinksAreSortedByTheirNumbersNotTheirOrder() {
+        // 页面把当前集渲染在最前（或乱序），排序仍按集号走。
+        val raw = marked(
+            Triple("/play/bbb", "第 2 集", true),
+            Triple("/play/ccc", "第 3 集", true),
+            Triple("/play/aaa", "第 1 集", true),
+        )
+        val list = EpisodeCodec.parse(raw, "https://a.com/play/bbb", "剧")
+        assertThat(list!!.episodes.map { it.label }).containsExactly("第 1 集", "第 2 集", "第 3 集").inOrder()
+        assertThat(list.currentIndex).isEqualTo(1)
+    }
+
+    @Test fun selfMarkedLinksNeedEnoughOfThem() {
+        // 2 条带标记的链接仍然不够——太容易是「上一集 / 下一集」两个按钮。
+        val raw = marked(
+            Triple("/play/aaa", "1", true),
+            Triple("/play/bbb", "2", true),
+        )
+        assertThat(EpisodeCodec.parse(raw, "https://a.com/play/aaa", "剧")).isNull()
+    }
+
+    @Test fun selfMarkedLinksWithoutEpisodeNumbersAreRefused() {
+        // 排不出顺序的一堆格子还不如不给面板（规格 §2.2「不做猜测」）：
+        // 地址没有尾数字、标签也不是数字时，只能认输。
+        val raw = marked(
+            Triple("/play/aaa", "播放", true),
+            Triple("/play/bbb", "播放", true),
+            Triple("/play/ccc", "播放", true),
+        )
+        assertThat(EpisodeCodec.parse(raw, "https://a.com/play/aaa", "剧")).isNull()
+    }
+
+    @Test fun selfMarkedLinksNeedDistinctNumbers() {
+        // 三条都读成同一集（标签都是 1）——那不是选集，是同一个链接的三种写法。
+        val raw = marked(
+            Triple("/play/aaa", "1", true),
+            Triple("/play/bbb", "1", true),
+            Triple("/play/ccc", "1", true),
+        )
+        assertThat(EpisodeCodec.parse(raw, "https://a.com/play/aaa", "剧")).isNull()
+    }
+
+    @Test fun theMainKeyStillWinsOverTheSelfMarkedLinks() {
+        // 两条路都能判出来时，地址本身有结构的那条（主键法）优先：
+        // 记号是站点自己写的，我们只是照信；URL 的结构是我们自己算出来的。
+        val raw = """[
+            {"href":"/p/1-2-1.html","text":"第 1 集","inList":true,"ep":true},
+            {"href":"/p/1-2-2.html","text":"第 2 集","inList":true,"ep":true},
+            {"href":"/p/1-2-3.html","text":"第 3 集","inList":true,"ep":true},
+            {"href":"/x/a1","text":"1","inList":false,"ep":true},
+            {"href":"/x/a2","text":"2","inList":false,"ep":true},
+            {"href":"/x/a3","text":"3","inList":false,"ep":true},
+            {"href":"/x/a4","text":"4","inList":false,"ep":true}
+        ]"""
+        val list = EpisodeCodec.parse(raw, "https://a.com/p/1-2-2.html", "剧")
+        assertThat(list!!.episodes.map { it.url }).containsExactly(
+            "https://a.com/p/1-2-1.html",
+            "https://a.com/p/1-2-2.html",
+            "https://a.com/p/1-2-3.html",
+        ).inOrder()
+    }
+
+    @Test fun anUnmarkedCandidateListIsStillNotAShow() {
+        // 兜底那一层的候选（inList=false、ep=false）不会被误当成「自我标明」。
+        val raw = marked(
+            Triple("/play/aaa", "1", false),
+            Triple("/play/bbb", "2", false),
+            Triple("/play/ccc", "3", false),
+        )
+        assertThat(EpisodeCodec.parse(raw, "https://a.com/play/aaa", "剧")).isNull()
+    }
+
     // ── 当前集定位 ─────────────────────────────────────────────
 
     @Test fun currentIndexToleratesTrailingSlashAndFragment() {
@@ -216,6 +320,9 @@ class EpisodeCodecTest {
             .isEqualTo("漫长的季节")
         assertThat(EpisodeCodec.seriesTitle("Show S01E03 高清完整版", "https://a.com/p/1"))
             .isEqualTo("Show")
+        // 「影视」与「影院」是同一类站名后缀：4kvm.net 的标题就是「… - 第1集 -4k影视」。
+        assertThat(EpisodeCodec.seriesTitle("兰香如故 - 第1集 -4k影视", "https://4kvm.net/play/x"))
+            .isEqualTo("兰香如故")
     }
 
     @Test fun seriesTitleFallsBackToTheHost() {

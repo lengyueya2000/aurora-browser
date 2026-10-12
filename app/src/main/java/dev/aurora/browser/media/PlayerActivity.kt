@@ -61,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -68,6 +69,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -104,6 +106,7 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import dev.aurora.browser.data.DownloadsRepository
 import dev.aurora.browser.ui.browser.DesktopMode
 import dev.aurora.browser.ui.cast.CastController
 import dev.aurora.browser.ui.components.AuroraBottomSheet
@@ -186,6 +189,27 @@ class PlayerActivity : ComponentActivity() {
 
     private var endCardTicker: Runnable? = null
     private var incognito = false
+
+    // ── 下载状态（规格 5.8）──
+
+    /**
+     * 系统下载器的仓库。必须是个长期实例：速度靠两次采样的差算出来，每次轮询新建一个
+     * 的话永远只有一次采样，速度永远是 0。
+     */
+    private val downloads by lazy { DownloadsRepository(this) }
+
+    /** 底部那条下载状态；`null` 表示当前这个视频没有下载可显示。 */
+    private val downloadStatus = mutableStateOf<DownloadStatus?>(null)
+
+    private var downloadTicker: Runnable? = null
+
+    /**
+     * 这一次播放期间，有没有亲眼看到它正在下。
+     *
+     * 用来决定「下完之后那一行还留不留」：自己点的下载，下完了应该看到「已离线缓存 · 899 MB」
+     * 收个尾；而一进来就已经下好的那一集（本来就是离线播的），再挂一行状态纯属多余。
+     */
+    private var sawDownloadRunning = false
 
     /** 当前是不是「请求桌面版网站」。切集时嗅探窗口要用同一个 UA，否则站点给另一套页面。 */
     private var desktopMode = false
@@ -274,6 +298,7 @@ class PlayerActivity : ComponentActivity() {
                     trackSelector = selector,
                     initialSpeed = preferences.speed(),
                     pip = inPip.value,
+                    download = downloadStatus.value,
                     onSpeedChanged = { preferences.rememberSpeed(it) },
                     onEnded = { onEpisodeEnded() },
                     onOpenEpisodes = { episodeSheetOpen.value = true },
@@ -643,9 +668,56 @@ class PlayerActivity : ComponentActivity() {
         Toast.makeText(this, result.message, Toast.LENGTH_SHORT).show()
     }
 
+    /**
+     * 轮询当前视频的下载状态。
+     *
+     * 播放器一开就轮询，而不是「点了下载才开始」：下载可能在页面那边点过、也可能是上次
+     * 进来时点的、现在还在下——只认本界面那一次点击的话，这两种都看不到。
+     *
+     * 间隔不能小于速度计的采样下限（400ms），否则两次采样挨得太近，速度永远算不出来。
+     */
+    private fun startDownloadTicker() {
+        stopDownloadTicker()
+        val ticker = object : Runnable {
+            override fun run() {
+                downloadStatus.value = readDownloadStatus()
+                main.postDelayed(this, DOWNLOAD_POLL_MS)
+            }
+        }
+        downloadTicker = ticker
+        main.post(ticker)
+    }
+
+    private fun stopDownloadTicker() {
+        downloadTicker?.let { main.removeCallbacks(it) }
+        downloadTicker = null
+    }
+
+    /** 当前视频的下载状态；这个地址没在下载、也没有刚刚下完，就返回 `null`。 */
+    private fun readDownloadStatus(): DownloadStatus? {
+        val offline = OfflineMedia.items(this).firstOrNull { it.url == mediaUrl }
+        if (offline != null) {
+            if (offline.isRunning) sawDownloadRunning = true
+            // 一进来就已经下好的不显示：那一集本来就是离线播的，再挂一行状态属于噪音。
+            return if (offline.isRunning || sawDownloadRunning) offlineDownloadStatus(offline) else null
+        }
+        val file = downloads.query().firstOrNull { it.uri == mediaUrl }
+        if (file != null) {
+            if (file.isRunning) sawDownloadRunning = true
+            return if (file.isRunning || sawDownloadRunning) fileDownloadStatus(file) else null
+        }
+        return null
+    }
+
+    override fun onStart() {
+        super.onStart()
+        startDownloadTicker()
+    }
+
     /** 退到后台就停：不停的话用户切走了声音还在放。同时把进度存下来。 */
     override fun onStop() {
         super.onStop()
+        stopDownloadTicker()
         player?.pause()
         rememberPosition()
     }
@@ -769,6 +841,19 @@ private val RESIZE_OPTIONS = listOf(
  */
 private const val MAX_ERROR_DETAIL = 120
 
+/** 下载状态的轮询间隔。必须大于速度计的采样下限（400ms），否则速度永远算不出来。 */
+private const val DOWNLOAD_POLL_MS = 700L
+
+/** 下载进度条的宽度。固定宽度：它是一条状态，不该跟着那行字的长短一起伸缩。 */
+private val DOWNLOAD_BAR_WIDTH = 160.dp
+
+/**
+ * 底部那条下载状态要抬多高，才不压住控制层左下角那排胶囊（上一集 / 下一集）。
+ *
+ * 胶囊高约 30dp，加上那行的上下留白约 46dp；取 60dp 留一点余量。
+ */
+private val BOTTOM_CHIPS_CLEARANCE = 60.dp
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun PlayerScreen(
@@ -782,6 +867,8 @@ private fun PlayerScreen(
     trackSelector: DefaultTrackSelector,
     initialSpeed: Float,
     pip: Boolean,
+    /** 当前视频的下载状态；`null` 表示没有可显示的下载。 */
+    download: DownloadStatus?,
     onSpeedChanged: (Float) -> Unit,
     onEnded: () -> Unit,
     onOpenEpisodes: () -> Unit,
@@ -996,17 +1083,6 @@ private fun PlayerScreen(
             )
         }
 
-        // 选集面板盖在最上面：它有遮罩，打开时下面所有东西都不该收到点击。
-        if (sheetOpen && !pip) {
-            EpisodeSheet(
-                play = episodes,
-                watched = watchedEpisodes,
-                onToggleAutoNext = onAutoNextChanged,
-                onPick = onPickEpisode,
-                onDismiss = onCloseEpisodes,
-            )
-        }
-
         AnimatedVisibility(
             visible = controlsVisible && !pip,
             enter = fadeIn(),
@@ -1036,6 +1112,10 @@ private fun PlayerScreen(
                         PlayerGestures.seekTarget(player.currentPosition, delta, player.duration),
                     )
                 },
+                // 上一集 / 下一集走和选集面板同一条路：都是「换一集」，不该有两套行为
+                // （比如一个记进度、一个不记）。
+                onPrevEpisode = { episodes.prevIndex?.let(onPickEpisode) },
+                onNextEpisode = { episodes.nextIndex?.let(onPickEpisode) },
                 onScrub = { fraction ->
                     scrubbing = true
                     scrubMs = (durationMs * fraction).toLong()
@@ -1064,6 +1144,80 @@ private fun PlayerScreen(
                 onDownload = onDownload,
                 onExit = onExit,
             )
+        }
+
+        // 下载状态独立于控制层：控制层几秒后会自动收起（还会带一层压暗画面的遮罩），
+        // 而「下得怎么样、快不快」是用户主动点出来的东西，不该跟着一起消失——跟着消失
+        // 的话，点完下载等三秒就再也看不见速度了。位置抬到控制层那排胶囊之上，两者
+        // 同时出现时不打架。
+        download?.let { status ->
+            if (!pip) {
+                DownloadStrip(
+                    status = status,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = AuroraSpacing.m, bottom = BOTTOM_CHIPS_CLEARANCE),
+                )
+            }
+        }
+
+        // 选集面板放在**最后**：它要盖住画面，也要盖住控制层。放在控制层之前会画出
+        // 「滑杆和倍速按钮压在剧集格子上」的样子（实测就是这样），而且面板的遮罩也拦不住
+        // 控制层里那些按钮。
+        if (sheetOpen && !pip) {
+            EpisodeSheet(
+                play = episodes,
+                watched = watchedEpisodes,
+                onToggleAutoNext = onAutoNextChanged,
+                onPick = onPickEpisode,
+                onDismiss = onCloseEpisodes,
+            )
+        }
+    }
+}
+
+/**
+ * 底部那条下载状态：一行字，加上总量已知时的一条细进度条。
+ *
+ * 刻意不做成可点的：点了该去哪？播放器里没有下载管理，为一行状态再拉一条跳转路径不划算。
+ * 它要回答的只是「下得怎么样、快不快」。
+ *
+ * 也不加 `liveRegion`：这行字每 700 毫秒变一次，读屏会被它念得停不下来。
+ */
+@Composable
+private fun DownloadStrip(status: DownloadStatus, modifier: Modifier = Modifier) {
+    val colors = Aurora.colors
+    Column(
+        modifier = modifier
+            .background(
+                color = colors.surface.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(AuroraRadius.full),
+            )
+            .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.xs + 2.dp),
+    ) {
+        Text(
+            text = status.label,
+            color = if (status.running) colors.text else colors.textSecondary,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        status.progress?.let { value ->
+            Spacer(Modifier.height(AuroraSpacing.xs))
+            Box(
+                Modifier
+                    .width(DOWNLOAD_BAR_WIDTH)
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(AuroraRadius.full))
+                    .background(colors.bgElevated),
+            ) {
+                Box(
+                    Modifier
+                        .width(DOWNLOAD_BAR_WIDTH * value.coerceIn(0f, 1f))
+                        .height(3.dp)
+                        .background(colors.brand),
+                )
+            }
         }
     }
 }
@@ -1180,7 +1334,11 @@ private fun GestureLayer(
 /**
  * 控制层。位置按真机使用习惯排：
  * 右上角放「小窗 / 投屏」（都是把画面交出去的动作），右侧中间放「下载」，
- * 右下角一排是「倍速 / 画质 / 适应 / 退出全屏」，中间留播放/暂停与 ±10 秒，底部是进度。
+ * 右下角一排是「倍速 / 画质 / 适应 / 退出全屏」，左下角是「上一集 / 下一集」，
+ * 中间留播放/暂停与 ±10 秒，底部是进度。
+ *
+ * 「上一集 / 下一集」放左下角是为了和右下的那排偏好按钮分开：左边是**看哪一集**
+ * （内容导航），右边是**怎么看**（画质/倍速/比例），一眼就能分出两类。
  */
 @Composable
 private fun PlayerControls(
@@ -1200,6 +1358,8 @@ private fun PlayerControls(
     onPanel: (PlayerPanel) -> Unit,
     onTogglePlay: () -> Unit,
     onSeekBy: (Long) -> Unit,
+    onPrevEpisode: () -> Unit,
+    onNextEpisode: () -> Unit,
     onScrub: (Float) -> Unit,
     onScrubEnd: (Float) -> Unit,
     onSpeed: (Float) -> Unit,
@@ -1380,6 +1540,29 @@ private fun PlayerControls(
                 ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // 左下角：上一集 / 下一集。占满左侧的剩余空间，把右边那排偏好按钮顶到尽头。
+                // 单集视频整组不出现（与标题行的 caret 同一个口径）；是最后一集时「下一集」
+                // 变灰而不是消失——按钮跳位置比按钮点不动更让人恼火。
+                if (hasEpisodes) {
+                    Row(
+                        Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.s),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ControlChip(
+                            label = "上一集",
+                            active = false,
+                            enabled = episodes.prevIndex != null,
+                            onClick = onPrevEpisode,
+                        )
+                        ControlChip(
+                            label = "下一集",
+                            active = false,
+                            enabled = episodes.nextIndex != null,
+                            onClick = onNextEpisode,
+                        )
+                    }
+                }
                 ControlChip(PlayerGestures.speedLabel(speed), panel == PlayerPanel.SPEED) {
                     onPanel(if (panel == PlayerPanel.SPEED) PlayerPanel.NONE else PlayerPanel.SPEED)
                 }
@@ -1455,19 +1638,39 @@ private fun PlayPauseGlyph(playing: Boolean, tint: Color, side: Dp) {
     }
 }
 
+/**
+ * 控制层里的一枚胶囊按钮。
+ *
+ * `enabled = false` 用于「这一集没有上一集 / 下一集」：按钮留在原位但变暗、点不动。
+ * 变暗是给眼睛看的，`clickable(enabled = false)` 顺带把 disabled 语义交给读屏——
+ * 不以颜色为唯一指示（规格 8）。
+ */
 @Composable
-private fun ControlChip(label: String, active: Boolean, onClick: () -> Unit) {
+private fun ControlChip(
+    label: String,
+    active: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     val colors = Aurora.colors
     Text(
         text = label,
-        color = if (active) colors.brand else colors.text,
+        color = when {
+            !enabled -> colors.textSecondary.copy(alpha = 0.45f)
+            active -> colors.brand
+            else -> colors.text
+        },
         fontSize = 13.sp,
         modifier = Modifier
             .background(
-                color = if (active) colors.surfaceHover else colors.surface.copy(alpha = 0.72f),
+                color = when {
+                    !enabled -> colors.surface.copy(alpha = 0.35f)
+                    active -> colors.surfaceHover
+                    else -> colors.surface.copy(alpha = 0.72f)
+                },
                 shape = RoundedCornerShape(AuroraRadius.full),
             )
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.xs + 2.dp),
     )
 }
@@ -1564,10 +1767,15 @@ private fun EpisodeSheet(
             onClick = { onToggleAutoNext(!play.autoNext) },
             trailing = { SwitchTrailing(play.autoNext) },
         )
+        // 面板高度是内容撑出来的，而播放器是横屏（360dp 高）：460dp 的网格会把最后几行顶到
+        // 屏幕外，用户看到的是一个没有底的面板（实测就是这样）。按屏幕高度算一个上限——
+        // 竖屏下 460dp 够用，横屏下自动收缩到放得下的高度，网格自己滚动。
+        val gridMax = (LocalConfiguration.current.screenHeightDp - EpisodeSheetChromeDp)
+            .dp.coerceIn(EpisodeGridMinHeight, EpisodeGridMaxHeight)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = EpisodeGridMaxHeight)
+                .heightIn(max = gridMax)
                 .verticalScroll(rememberScrollState())
                 .padding(top = AuroraSpacing.m),
         ) {
@@ -1791,8 +1999,18 @@ private val EpisodeCellHeight = 44.dp
  *
  * 一季 100 集的话 20 行能把整屏铺满、把「自动播放下一集」那行挤出视野，所以网格自己滚。
  * 460dp 与浏览器里的 `SheetContentMaxHeight` 取同一个值——两个抽屉看起来才是一套东西。
+ * 这只是**上限**：横屏下屏幕本身没这么高，实际高度由 [EpisodeSheetChromeDp] 从屏幕高度里扣。
  */
 private val EpisodeGridMaxHeight = 460.dp
+
+/** 网格再挤也得留这么高，否则面板里什么都看不见（窗口被压到极小时兜底）。 */
+private val EpisodeGridMinHeight = 88.dp
+
+/**
+ * 面板里除网格之外的高度：把手 24dp + 剧名行 36dp + 开关行 56dp + 网格上间距 12dp +
+ * 面板底部留白 24dp ≈ 152dp，取 170dp 留点余量。
+ */
+private const val EpisodeSheetChromeDp = 170
 
 /** 三个二级面板：倍速、清晰度、画面比例。 */
 @Composable

@@ -5,7 +5,7 @@ package dev.aurora.browser.media
  *
  * 单独抽出来是因为切集这件事的**判定**全在这里，而它有几个很容易写错的地方，值得写单测
  * 钉住：`index` 可能不在列表里（当前页没被渲染成链接，见 [EpisodeList.currentIndex]），
- * 也可能是最后一集；[next] 只在真的还有下一集时才给东西。
+ * 也可能是最后一集；[next] / [prev] 只在真的还有下一集 / 上一集时才给东西。
  *
  * 刻意**不持有播放器**：这里只回答「下一集是哪一集」，真正换地址、查进度、报错都在
  * [dev.aurora.browser.media.PlayerActivity] 里做。这样这份逻辑在 Robolectric 下不用起
@@ -38,6 +38,22 @@ data class EpisodePlayback(
 
     /** 下一集；没有下一集时为 `null`。 */
     val next: Episode? get() = nextIndex?.let { list?.episodes?.getOrNull(it) }
+
+    /**
+     * 上一集的下标；没有上一集（单集视频、第一集、当前页不在列表里）时为 `null`。
+     *
+     * `index < 0` 时不给「上一集」：[nextIndex] 那种情况能退回第 0 集，是因为「往后走」总有个
+     * 明确的起点，而「往前走」没有——连当前是第几集都不知道，蒙一个只会把用户送错地方。
+     */
+    val prevIndex: Int?
+        get() {
+            val l = list ?: return null
+            if (index <= 0 || index >= l.size) return null
+            return index - 1
+        }
+
+    /** 上一集；没有上一集时为 `null`。 */
+    val prev: Episode? get() = prevIndex?.let { list?.episodes?.getOrNull(it) }
 
     fun episode(i: Int): Episode? = list?.episodes?.getOrNull(i)
 
