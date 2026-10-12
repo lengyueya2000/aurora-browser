@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Aurora</string>
+    <string name="app_name">极光浏览器</string>
     <!-- 离线缓存的前台服务通知（下载进度挂在这条通知上） -->
     <string name="offline_channel_name">离线缓存</string>
     <string name="offline_channel_description">下载视频以便离线观看</string>
