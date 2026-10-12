@@ -66,7 +66,11 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
     fun resumeMs(url: String): Long {
         val entry = resumable().firstOrNull { it.url == url }
         if (entry != null) return entry.positionMs
-        return prefs.getLong(legacyPositionKey(url), 0L)
+        // `SharedPreferences` 的 get* 在**类型对不上**时抛 `ClassCastException`，不是返回默认
+        // 值。这个键从 1.10 起换过几轮写法，用户手机上那份偏好里躺着一个别的类型完全可能
+        // （跨版本升级，或者键名哈希跟别的东西撞上）。而这里是播放器建实例时读进度的地方
+        // ——一抛就是「一打开视频就闪退」，且只在这台设备上复现，查起来最费劲。
+        return runCatching { prefs.getLong(legacyPositionKey(url), 0L) }.getOrDefault(0L)
     }
 
     /**
@@ -140,7 +144,8 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
     }
 
     fun speed(): Float {
-        val stored = prefs.getFloat(KEY_SPEED, 1f)
+        // 同上：类型对不上会抛，不是回默认值。倍速是在播放器里读的，崩不起。
+        val stored = runCatching { prefs.getFloat(KEY_SPEED, 1f) }.getOrDefault(1f)
         return if (stored in PlayerGestures.SPEEDS) stored else 1f
     }
 

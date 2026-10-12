@@ -15,6 +15,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -72,6 +74,7 @@ import dev.aurora.browser.media.EpisodeSession
 import dev.aurora.browser.media.EpisodeTabSync
 import dev.aurora.browser.media.MediaDownload
 import dev.aurora.browser.media.MediaUrls
+import dev.aurora.browser.media.NotificationPermission
 import dev.aurora.browser.media.OfflineItem
 import dev.aurora.browser.media.OfflineMedia
 import dev.aurora.browser.media.PlaybackPreferences
@@ -209,7 +212,9 @@ fun BrowserScreen(
     var reader by remember { mutableStateOf<Pair<String, String>?>(null) }
     var libraryTab by remember { mutableStateOf(LibraryTab.BOOKMARKS) }
     var downloadItems by remember { mutableStateOf<List<DownloadItem>>(emptyList()) }
-    var offlineItems by remember { mutableStateOf<List<OfflineItem>>(emptyList()) }
+    // `null` = 离线列表**没读出来**（索引库损坏、目录锁被占、存储写满）。这和「一条都没有」
+    // 是两件事，界面上要分开说：前者给一句提示，后者才是空状态。
+    var offlineItems by remember { mutableStateOf<List<OfflineItem>?>(emptyList()) }
     // 离线缓存的落盘体积（`OfflineMedia.cacheBytes`）。跟列表一起刷，删除后就能立刻
     // 看见数字变小——这是「删除是不是真删了」在非 root 设备上唯一的证据。
     var offlineCacheBytes by remember { mutableLongStateOf(0L) }
@@ -235,9 +240,16 @@ fun BrowserScreen(
      */
     fun refreshDownloads() {
         downloadItems = downloads.query()
-        offlineItems = OfflineMedia.items(context)
+        offlineItems = OfflineMedia.itemsOrNull(context)
         offlineCacheBytes = OfflineMedia.cacheBytes(context)
     }
+
+    // 下载进度的通知权限（Android 13+ 的运行时权限）。在用户点下「下载」的那一刻问——
+    // 启动就弹框用户不知道这权限干什么，多半直接拒；点下载时问，一句话就说明白了。
+    // 拒绝不影响下载本身，所以问一次就够，不再重复打扰（见 NotificationPermission）。
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* 拒绝也不做什么：下载照跑，只是没有那条进度通知。 */ }
 
     /**
      * 开始下载一个已经解析好的地址。
@@ -246,6 +258,7 @@ fun BrowserScreen(
      * 内置播放器里的下载按钮走同一份判断。
      */
     val startDownload: (url: String, title: String) -> Boolean = { url, title ->
+        NotificationPermission.requestIfNeeded(context, notificationLauncher)
         val result = MediaDownload.enqueue(
             context = context,
             url = url,
@@ -255,7 +268,7 @@ fun BrowserScreen(
         )
         vm.showMessage(result.message)
         if (MediaUrls.isStream(url)) {
-            offlineItems = OfflineMedia.items(context)
+            offlineItems = OfflineMedia.itemsOrNull(context)
         } else {
             downloadItems = downloads.query()
         }
@@ -263,7 +276,18 @@ fun BrowserScreen(
     }
 
     // 关掉的标签要连 WebView 一起释放，否则池里会留着看不见的实例（内存 + 后台 JS）。
-    LaunchedEffect(tabs.map { it.id }) { pool.retain(tabs.map { it.id }.toSet()) }
+    LaunchedEffect(tabs.map { it.id }) {
+        val ids = tabs.map { it.id }.toSet()
+        pool.retain(ids)
+        // 缩略图也要跟着丢。池那边 `dispose` 会清掉自己那份，但界面这份 `tabThumbnails`
+        // 是另一个 Map：关掉标签它不会自己少一个键，那张 320×192 的位图就一直挂在组合状态里
+        // （RGB_565 约 120KB）。开关几十个标签页下来是实打实的几 MB，而且全都拍不到、用不上。
+        // 位图在现代 Android 上就在 Java 堆里，去掉引用即可，不要手动 recycle——它可能正
+        // 在标签网格里画着，回收会让下一帧崩掉（同 WebViewPool.dispose 的说明）。
+        if (tabThumbnails.keys.any { it !in ids }) {
+            tabThumbnails = tabThumbnails.filterKeys { it in ids }
+        }
+    }
 
     // 下载页开着的时候按 [DOWNLOADS_REFRESH_MS] 刷一次。
     // 只在真的有东西在跑时才继续查库：闲着的轮询纯属浪费，也让速度计的采样间隔失去意义。
@@ -277,7 +301,7 @@ fun BrowserScreen(
         refreshDownloads()
         while (true) {
             delay(DOWNLOADS_REFRESH_MS)
-            if (downloadItems.any { it.isRunning } || offlineItems.any { it.isRunning }) {
+            if (downloadItems.any { it.isRunning } || offlineItems.orEmpty().any { it.isRunning }) {
                 refreshDownloads()
             }
         }
@@ -338,10 +362,20 @@ fun BrowserScreen(
         pool.onHideFullscreenView = { fullscreen.hide() }
         // 视频画面上的「全屏 / 下载 / 投屏」按钮。地址是页面给的，必须和当前页面提取到的
         // 视频源对得上才执行——注入的 JS 接口对页面里所有脚本（含跨域 iframe）都可见。
-        pool.onMediaAction = { action, url, extra ->
-            val tabId = active.id
-            pool.evaluateVideos(tabId) { sources ->
+        pool.onMediaAction = media@{ fromTabId, action, url, extra ->
+            // 桥是**按标签**绑的，这里拿到的就是发起调用的那个标签。后台标签页里的脚本也能
+            // 调进来：用户没在看它，动作不该执行；更要紧的是，以前这里写的是 `active.id`，
+            // 后台标签的一次调用会拿**前台**标签的地址、标题和 Referer 去执行——把动作和
+            // 上下文配错了对，而且用户完全看不出发生了什么。
+            val tab = tabs.firstOrNull { it.id == fromTabId }
+            if (tab == null || tab.id != active.id) return@media
+            pool.evaluateVideos(fromTabId) { sources ->
                 val fromPage = sources.firstOrNull { it.url == url }
+                // 空地址表示「这个 `<video>` 的源取不到」（MSE 站点常见），允许，由嗅探结果
+                // 兜底。但**前提是页面上真的有个视频**：否则页面上任意一段脚本（广告 iframe、
+                // 统计脚本）都能凭一次空地址调用把内置播放器弹出来，而用户什么都没点。
+                // 页面上一个 `<video>` 都没有，这次调用就无从谈起，直接丢掉。
+                if (url.isEmpty() && sources.isEmpty()) return@evaluateVideos
                 // 页面还没给出地址时（`<video>` 刚挂上、`src` 还没设）注入的脚本会传空串，
                 // 这是允许的（见 MediaAction.isValid）：直接拿嗅探结果兜底，而不是报「已失效」。
                 if (fromPage == null && url.isNotEmpty()) {
@@ -350,13 +384,13 @@ fun BrowserScreen(
                 }
                 // 页面里那个地址是不是 MSE 的壳子（blob:/data:）。是的话它出了页面就取不到
                 // 内容，真实流只能靠网络层嗅探——欧乐影院这类站点就是这种情形。
-                val sniffed = pool.sniffedPlayableUrl(tabId)
+                val sniffed = pool.sniffedPlayableUrl(fromTabId)
                 val target = if (fromPage == null || fromPage.isStream) sniffed else fromPage.url
                 val mime = fromPage?.type.orEmpty()
                 when (action) {
                     MediaAction.PLAY -> {
                         val playUrl = target
-                        val pageUrl = active.url
+                        val pageUrl = tab.url
                         when {
                             playUrl == null ->
                                 vm.showMessage("没嗅到这个视频的真实流地址，先让它播几秒再试")
@@ -366,7 +400,7 @@ fun BrowserScreen(
                             pageUrl.isNullOrBlank() -> openInPlayer(
                                 context = context,
                                 url = playUrl,
-                                title = active.title,
+                                title = tab.title,
                                 referer = null,
                                 extra = extra,
                                 vm = vm,
@@ -378,20 +412,20 @@ fun BrowserScreen(
                                 // 列表把开播拖慢 2.5 秒，对占绝大多数的单集视频是纯粹的伤害。
                                 // 抓不到就当单集视频——按钮缺席好过按钮点了没反应（规格 5.5/7）。
                                 pool.extractEpisodes(
-                                    tabId = tabId,
+                                    tabId = fromTabId,
                                     pageUrl = pageUrl,
-                                    pageTitle = active.title,
+                                    pageTitle = tab.title,
                                     gaps = longArrayOf(0L),
                                 ) { episodes ->
                                     openInPlayer(
                                         context = context,
                                         url = playUrl,
-                                        title = active.title,
+                                        title = tab.title,
                                         referer = pageUrl,
                                         extra = extra,
                                         vm = vm,
                                         episodes = episodes,
-                                        incognito = active.isIncognito,
+                                        incognito = tab.isIncognito,
                                         desktopMode = vm.desktopMode.value,
                                     )
                                 }
@@ -402,7 +436,7 @@ fun BrowserScreen(
                         if (target == null) {
                             vm.showMessage("没嗅到这个视频的真实流地址，先让它播几秒再试")
                         } else {
-                            startDownload(target, active.title)
+                            startDownload(target, tab.title)
                         }
                     }
                     MediaAction.CAST -> {
@@ -550,6 +584,21 @@ fun BrowserScreen(
                 }
             }
 
+            // 二级界面（除 Page 外的 surface）都是叠在 WebView 之上的不透明覆盖层。Compose
+            // 里**只铺了背景色的兄弟节点不吃指针事件**：二级页面上没铺控件的那片空白，点击会
+            // 直接穿到下面的 AndroidView（WebView）上——用户在「书签」页的空白处点一下，底下
+            // 的网页可能就跟着跳走了，而屏幕上看不出任何东西被点过。
+            //
+            // 这里垫一层只吞点击的透明层，位置在二级界面之下、WebView 之上（命中测试是从后
+            // 往前走的，所以二级界面上的真控件仍然先收到事件，只有没人认领的才落到这层）。
+            if (surface != BrowserSurface.Page) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) { detectTapGestures { } },
+                )
+            }
+
             when (surface) {
                 BrowserSurface.Omnibox -> OmniboxScreen(
                     query = query,
@@ -588,7 +637,8 @@ fun BrowserScreen(
                     // 离线缓存的条目只能在应用内播：它存在应用私有目录里，没有对外的文件。
                     // 没下完也能点（边下边看）：播放器读的是下载用的同一份缓存，已落盘的分片
                     // 直接命中，没下到的当场从网络补。
-                    offline = offlineItems,
+                    offline = offlineItems.orEmpty(),
+                    offlineLoadFailed = offlineItems == null,
                     cacheBytes = offlineCacheBytes,
                     onOpenOffline = { item ->
                         vm.closeSecondarySurface()
@@ -606,20 +656,32 @@ fun BrowserScreen(
                             episodeIndex = saved?.episodeIndex ?: -1,
                         )
                     },
+                    // 三个动作都返回是否真的送达了下载服务。以前无论成败都只刷新列表：
+                    // 服务没起来时列表**什么都没变**，界面上看不出和「点了没反应」的区别，
+                    // 用户会以为删不掉。失败就说一句。
                     onRemoveOffline = { item ->
-                        OfflineMedia.remove(context, item.url)
-                        refreshDownloads()
+                        if (OfflineMedia.remove(context, item.url)) {
+                            refreshDownloads()
+                        } else {
+                            vm.showMessage("删除失败，下载服务没有响应")
+                        }
                     },
                     // 暂停 / 继续：只有离线缓存这条能给（系统下载器没有公开的按条暂停接口，
                     // 见 DownloadsScreen 的文件头注释）。Media3 的下载器自己维护分片断点，
                     // 继续时从断点接着下，不重头来。
                     onPauseOffline = { item ->
-                        OfflineMedia.pause(context, item.url)
-                        refreshDownloads()
+                        if (OfflineMedia.pause(context, item.url)) {
+                            refreshDownloads()
+                        } else {
+                            vm.showMessage("暂停失败，下载服务没有响应")
+                        }
                     },
                     onResumeOffline = { item ->
-                        OfflineMedia.resume(context, item.url)
-                        refreshDownloads()
+                        if (OfflineMedia.resume(context, item.url)) {
+                            refreshDownloads()
+                        } else {
+                            vm.showMessage("继续下载失败，下载服务没有响应")
+                        }
                     },
                 )
                 BrowserSurface.Privacy -> PrivacyScreen(
@@ -1021,9 +1083,18 @@ private fun MenuGroupTitle(text: String) {
 /**
  * 无痕标签的常驻提示条（规格 5.10）：整屏不做独立配色，靠这条说明 + 工具栏描边区分。
  *
- * 文案只说做得到的事，**刻意不提 Cookie**：Android 的 WebView 全进程共用一个 Cookie 罐，
- * 没有按实例隔离的接口，无痕标签照样会带上普通标签存下的 Cookie、它新建的 Cookie 也留在
- * 磁盘上。写「不留 Cookie」就是一句做不到的承诺（规格 5.10 已同步删掉这一条）。
+ * 文案只说做得到的事，并且**必须把做不到的那一条说出来**。Android 的 WebView 全进程共用
+ * 一个 Cookie 罐和一个 HTTP 缓存目录，没有按实例隔离的接口：无痕标签照样会带上普通标签
+ * 存下的 Cookie，它自己拿到的 Cookie 也留在磁盘上。
+ *
+ * 前几版写的是「不记录历史、不保存表单、不缓存页面、不使用本地存储」——四句里有两句经不起
+ * 推敲：「不保存表单」在 API 26 之后是句废话（`saveFormData` 早就被移除，所有标签都不存）；
+ * 「不缓存页面」只做到了「本次加载不读缓存」（`LOAD_NO_CACHE`），响应照样会写进那个共用的
+ * 缓存目录。而对用户来说最要紧的一条——Cookie 没被隔离——反倒没写。用户按「无痕」的直觉
+ * 以为登录状态不会留下，实际会，这不是文案风格问题，是在误导他。
+ *
+ * 现在只留三条真的：不记入历史、不写入本地存储（`domStorageEnabled = false`）、不拍缩略图。
+ * Cookie 那半句如实写出来。
  */
 @Composable
 private fun IncognitoBanner() {
@@ -1043,7 +1114,7 @@ private fun IncognitoBanner() {
             modifier = Modifier.size(16.dp),
         )
         Text(
-            "无痕浏览：不记录历史、不保存表单、不缓存页面、不使用本地存储",
+            "无痕浏览：不记入历史、不写入本地存储；Cookie 与普通标签共用，不做隔离",
             color = c.textMuted,
             style = MaterialTheme.typography.labelSmall,
         )
@@ -1159,10 +1230,46 @@ private fun startScan(launcher: ActivityResultLauncher<Intent>, vm: BrowserViewM
     runCatching { launcher.launch(intent) }.onFailure { vm.showMessage("未安装扫码应用") }
 }
 
+/**
+ * 把 `tel:` / `mailto:` / `market:` / `intent:` 这些链接交给系统。
+ *
+ * `intent:` 要单独处理。它不是一个真的 URI scheme，而是一段**序列化过的 Intent**
+ * （`intent://host/path#Intent;scheme=xxx;package=yyy;S.foo=bar;end`），很多国内站点用它
+ * 唤起自家 App。直接 `Intent(ACTION_VIEW, Uri.parse(url))` 是没用的：系统的意图解析不会去
+ * 解析这段文本，找不到任何应用能处理 `intent:` 这个 scheme，结果就是「点了没反应」。
+ * 必须用 [Intent.parseUri] 按 [Intent.URI_INTENT_SCHEME] 反序列化，才能拿到里面真正的
+ * 目标（scheme / package / extras）。
+ *
+ * 解析出来的 Intent 一律加上 `FLAG_ACTIVITY_NEW_TASK` 并**丢掉** `component`：
+ * 网页里可以写任意 component，让它去拉起某个未导出的 Activity——这是经典的
+ * intent-redirection 漏洞。交给系统按 scheme 正常匹配就够了。
+ */
 private fun openExternal(context: Context, url: String) {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    val intent = if (url.startsWith("intent:", ignoreCase = true)) {
+        runCatching { Intent.parseUri(url, Intent.URI_INTENT_SCHEME) }.getOrNull()
+            ?.apply { component = null }
+            ?: run {
+                Toast.makeText(context, "这个链接无法打开", Toast.LENGTH_SHORT).show()
+                return
+            }
+    } else {
+        Intent(Intent.ACTION_VIEW, Uri.parse(url))
+    }
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     runCatching { context.startActivity(intent) }.onFailure {
-        Toast.makeText(context, "没有能打开该链接的应用", Toast.LENGTH_SHORT).show()
+        // `intent:` 链接通常带一个 `browser_fallback_url`：目标 App 没装时应该回到网页版。
+        // 页面自己声明了它，就照办——不然用户看到的是「点了没反应」。
+        val fallback = intent.getStringExtra("browser_fallback_url")
+        val recovered = fallback != null &&
+            runCatching {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(fallback))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }.isSuccess
+        if (!recovered) {
+            Toast.makeText(context, "没有能打开该链接的应用", Toast.LENGTH_SHORT).show()
+        }
     }
 }
 

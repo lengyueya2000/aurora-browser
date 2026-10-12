@@ -119,7 +119,7 @@ class MediaOverlayTest {
     /** 桥自己也要挡一道，不能只靠调用方守规矩。 */
     @Test fun bridgeDropsInvalidCalls() {
         val seen = mutableListOf<String>()
-        val bridge = MediaBridge { action, url, _ -> seen += "$action $url" }
+        val bridge = MediaBridge("t1") { _, action, url, _ -> seen += "$action $url" }
         bridge.onMediaAction("download", "https://a.com/v.mp4", "")
         bridge.onMediaAction("evil", "https://a.com/v.mp4", "")
         bridge.onMediaAction("download", "javascript:alert(1)", "")
@@ -129,7 +129,7 @@ class MediaOverlayTest {
     /** 第三个参数（play 的当前秒数）要原样带给宿主。 */
     @Test fun bridgeForwardsTheExtraField() {
         var extra: String? = null
-        val bridge = MediaBridge { _, _, e -> extra = e }
+        val bridge = MediaBridge("t1") { _, _, _, e -> extra = e }
         bridge.onMediaAction("play", "blob:https://a.com/x", "123")
         assertThat(extra).isEqualTo("123")
     }
@@ -142,7 +142,7 @@ class MediaOverlayTest {
      */
     @Test fun bridgeToleratesNullArguments() {
         val seen = mutableListOf<String>()
-        val bridge = MediaBridge { action, url, extra -> seen += "$action $url $extra" }
+        val bridge = MediaBridge("t1") { _, action, url, extra -> seen += "$action $url $extra" }
         bridge.onMediaAction(null, "https://a.com/v.mp4", null)
         bridge.onMediaAction("play", null, null)
         bridge.onMediaAction("play", "https://a.com/v.mp4", null)

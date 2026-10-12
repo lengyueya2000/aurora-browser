@@ -78,8 +78,29 @@ class FaviconStore internal constructor(context: Context) {
         val bitmap = FaviconCodec.decode(bytes) ?: return null
         runCatching {
             fileFor(key).outputStream().use { it.write(bytes) }
+            pruneDisk()
         }
         return bitmap
+    }
+
+    /**
+     * 磁盘缓存也设个上限。
+     *
+     * 内存那份有 [MAX_ICONS] 兜着，磁盘这份以前完全没有：用户每访问一个新主机就多一个
+     * `.img` 文件，只增不减。系统确实会在空间紧张时清 `cacheDir`，但那是**最后手段**——
+     * 在这个浏览器自己的存储统计里，它会一直显示成一个越来越大的数字，而用户没有任何
+     * 入口去清它（设置页没有「清除缓存」）。按最后修改时间丢最旧的那批就够了：图标是可
+     * 再生资源，丢掉只是下次再取一遍。
+     *
+     * 放在写入之后同步做，而不是起个定时任务：写入本来就跑在 IO 线程上，文件数超过上限
+     * 才会真的去 `listFiles`，正常情况（几十个文件）只是一次数组长度比较。
+     */
+    private fun pruneDisk() {
+        val files = cacheDir().listFiles() ?: return
+        if (files.size <= MAX_DISK_ICONS) return
+        files.sortedBy { it.lastModified() }
+            .take(files.size - MAX_DISK_ICONS)
+            .forEach { runCatching { it.delete() } }
     }
 
     private fun fileFor(key: String): File = File(cacheDir(), "$key.img")
@@ -100,7 +121,15 @@ class FaviconStore internal constructor(context: Context) {
 
     companion object {
         private const val DIR = "favicons"
+
+        /** 内存里最多留几个图标；到顶就整块丢掉重取（见 [remember]）。 */
         private const val MAX_ICONS = 64
+
+        /**
+         * 磁盘上最多留几个图标。比内存那份宽一些——磁盘缓存的意义就是「下次启动还在」，
+         * 跟内存设成一样大等于白存。256 个 × 平均几 KB，撑死几 MB。
+         */
+        private const val MAX_DISK_ICONS = 256
 
         /** 发请求的方式。无状态，全进程共用一个。 */
         private val REQUEST: FaviconRequest = HttpFaviconRequest()

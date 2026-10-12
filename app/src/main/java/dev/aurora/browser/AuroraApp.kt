@@ -8,6 +8,7 @@ import dev.aurora.browser.data.BrowserStore
 import dev.aurora.browser.data.PrefsBrowserStore
 import dev.aurora.browser.domain.TabRepository
 import dev.aurora.browser.media.AuroraDownloadService
+import dev.aurora.browser.media.OfflineMedia
 import dev.aurora.browser.ui.browser.BrowserViewModel
 
 /**
@@ -31,6 +32,13 @@ class AuroraApp : Application() {
         // 尽早装上：真机上复现不了的闪退，下次启动时能把堆栈原样交出来。
         CrashLog.install(this)
         createOfflineChannel()
+        // 预热离线缓存的 `SimpleCache`。第一次构造它要读缓存目录、开索引数据库，是实打实的
+        // 磁盘 I/O；而第一个用到它的地方是播放器的 `onCreate`（读下载状态），跑在主线程上。
+        // 放在这里后台线程先建好，播放器那次拿到的就是现成实例，不再卡主线程。
+        Thread({ OfflineMedia.warmUp(this) }, "offline-cache-warmup").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     /**

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  冷启动那一帧的底色。
+
+  `windowBackground` 由系统在 `onCreate` 之前就画出来（启动窗口 / splash），所以它**必须**
+  是一个 XML 里的静态颜色，拿不到 Compose 的令牌。这里抄的就是 `LightAuroraColors.bg`
+  （Tokens.kt 里的 `#FBF9F6`），values-night 那份抄的是 `DarkAuroraColors.bg`（`#0F172A`）。
+
+  两份值不一致就会在启动时闪一下别的颜色，所以有一道单测盯着它们（WindowBackgroundTest）：
+  改 Tokens.kt 忘了改这里，测试会红。
+-->
+<resources>
+    <color name="aurora_window_bg">#FBF9F6</color>
+</resources>

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  明文（http://）策略。
+
+  这份配置**允许明文**，而且是刻意的、不可收紧的——原因得写在这儿，免得日后有人看到
+  `cleartextTrafficPermitted="true"` 当成漏洞顺手改成 false，把浏览器改坏：
+
+  1. **网页导航**。这是个浏览器，用户可以在地址栏里敲任意地址、点任意链接。互联网上仍然
+     有大量只有 http 的站点（老论坛、图床、部分视频源站）。禁掉明文的后果是这些页面直接
+     打不开，而不是「更安全地打开」。
+  2. **离线缓存下载**。Media3 抓的是页面嗅探出来的真实流地址，这些地址在 http 页面上就是
+     http，在 https 页面上也常是 http（分片 CDN 尤其常见）。禁掉的话下载按钮点了没反应。
+  3. **favicon 抓取**（见 Favicons.kt，走 HttpURLConnection）。http 站点的图标就是 http。
+
+  也就是说，本应用的每一次明文请求都是「用户自己要访问的那个地址」，没有一个是应用自己
+  偷偷发的（没有遥测、没有更新检查、没有广告 SDK）。所以按域名去圈定「只许哪些域名走明文」
+  在这里没有意义——域名集合就是用户任意输入的那个集合。
+
+  **HTTPS 那侧没有放松**：仍然只信系统根证书，不额外 pin。这里刻意**不**写
+  `<certificates src="user" />`——加上它等于信任用户装进系统的任意根证书，装一个抓包工具的
+  CA 就能中间人解开全部 HTTPS 流量。Android 从 targetSdk 24 起默认就不信用户证书，这正是
+  浏览器该有的姿态（Lint 也会为此报 AcceptsUserCertificates）。
+
+  另外，WebView 收到证书错误时一律 `handler.cancel()`（见 WebViewPool 的 onReceivedSslError），
+  不给「继续访问」的直达路径——那是最容易被当成「贴心功能」加回来、又最不该加的东西。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

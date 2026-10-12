@@ -55,6 +55,9 @@ object OfflineMedia {
 
     private const val TITLE_PREFS = "aurora_offline_titles"
 
+    /** 标题库的条数上限。超出就丢一批旧的——丢掉的只是显示用的标题，见 [rememberTitle]。 */
+    private const val MAX_TITLES = 200
+
     /**
      * 「用户手动暂停」用的 stop reason。
      *
@@ -104,6 +107,20 @@ object OfflineMedia {
             NoOpCacheEvictor(),
             database(context),
         ).also { cacheInstance = it }
+
+    /**
+     * 提前把离线缓存建起来（**在后台线程调**）。
+     *
+     * `SimpleCache` 的构造要读索引库、抢目录锁，是实打实的磁盘 I/O；而它第一次被用到是在
+     * 播放器的 `onCreate` 里（见 [playbackDataSource]），那条路在主线程上——索引一大，
+     * 或者上次被杀进程留下半个索引，启动就会卡一下，甚至 ANR。所以在 Application 启动时
+     * 先丢到后台把它建好，播放器真要用的时候只剩一次查表。
+     *
+     * 建不起来也无所谓：[playbackDataSource] 自己会退成纯网络播放。
+     */
+    fun warmUp(context: Context) {
+        runCatching { cache(context.applicationContext) }
+    }
 
     /**
      * 离线缓存实际占用的字节数。
@@ -216,8 +233,16 @@ object OfflineMedia {
         }.isSuccess
     }
 
-    /** 当前所有离线下载（含进行中与已完成）。 */
-    fun items(context: Context): List<OfflineItem> = runCatching {
+    /**
+     * 当前所有离线下载（含进行中与已完成）。
+     *
+     * 返回 `null` = **没读出来**：索引库损坏、目录锁被别的进程占着、存储写满，都会走到这里。
+     * 以前这个方法直接返回列表、整个实现包在 `runCatching{}.getOrDefault(emptyList())` 里，
+     * 于是「读失败」和「真的一条都没有」在界面上长得一模一样——用户下载的东西看起来像
+     * 凭空消失了，还没有任何提示。调用方现在必须自己决定怎么处理这个 `null`：
+     * 下载管理页给一句提示，播放器那条状态按「不知道」处理（不显示）。
+     */
+    fun itemsOrNull(context: Context): List<OfflineItem>? = runCatching {
         val now = SystemClock.elapsedRealtime()
         // 走 downloadIndex 的游标而不是 getCurrentDownloads()：前者明确是「索引里的全部」，
         // 已完成的那条也在里面，后者只保证是「当前活动的那批」。
@@ -241,7 +266,7 @@ object OfflineMedia {
                 }
             }.also { list -> speed.retain(list.mapTo(mutableSetOf()) { it.url }) }
         }
-    }.getOrDefault(emptyList())
+    }.getOrNull()
 
     /** 把 media3 的状态常量翻译成我们自己的枚举，界面层就不必依赖 `@UnstableApi`。 */
     private fun stateOf(state: Int): OfflineItem.State = when (state) {
@@ -252,15 +277,22 @@ object OfflineMedia {
         else -> OfflineItem.State.STOPPED
     }
 
-    fun remove(context: Context, url: String) {
-        runCatching {
+    /**
+     * 删掉一条离线缓存（连同缓存里的分片）和它记下的标题。
+     *
+     * @return 是否已经把删除请求交给了下载服务。以前这里没有返回值、异常也被吞掉，用户点
+     *   删除后行还在那儿、却什么提示都没有——按不动的按钮比没有按钮更让人困惑。
+     */
+    fun remove(context: Context, url: String): Boolean {
+        forgetTitle(context, url)
+        return runCatching {
             DownloadService.sendRemoveDownload(
                 context,
                 AuroraDownloadService::class.java,
                 url,
                 /* foreground = */ false,
             )
-        }
+        }.isSuccess
     }
 
     /**
@@ -273,39 +305,65 @@ object OfflineMedia {
      *
      * 与 [remove] 一样走 `DownloadService`：直接改 `DownloadManager` 会在没有前台服务的
      * 时候被系统连任务一起收走。
+     *
+     * @return 是否把请求交给了下载服务（同 [remove]，失败要让用户知道）。
      */
-    fun pause(context: Context, url: String) {
-        runCatching {
-            DownloadService.sendSetStopReason(
-                context,
-                AuroraDownloadService::class.java,
-                url,
-                STOP_REASON_USER,
-                /* foreground = */ false,
-            )
-        }
-    }
+    fun pause(context: Context, url: String): Boolean = runCatching {
+        DownloadService.sendSetStopReason(
+            context,
+            AuroraDownloadService::class.java,
+            url,
+            STOP_REASON_USER,
+            /* foreground = */ false,
+        )
+    }.isSuccess
 
-    /** 继续：把 stop reason 清回 NONE，`DownloadManager` 会重新排队这条，从断点接着下。 */
-    fun resume(context: Context, url: String) {
-        runCatching {
-            DownloadService.sendSetStopReason(
-                context,
-                AuroraDownloadService::class.java,
-                url,
-                Download.STOP_REASON_NONE,
-                /* foreground = */ false,
-            )
-        }
-    }
+    /**
+     * 继续：把 stop reason 清回 NONE，`DownloadManager` 会重新排队这条，从断点接着下。
+     *
+     * @return 是否把请求交给了下载服务（同 [remove]）。
+     */
+    fun resume(context: Context, url: String): Boolean = runCatching {
+        DownloadService.sendSetStopReason(
+            context,
+            AuroraDownloadService::class.java,
+            url,
+            Download.STOP_REASON_NONE,
+            /* foreground = */ false,
+        )
+    }.isSuccess
 
-    /** 页面标题只在入队那一刻知道，`DownloadRequest` 里没地方放，自己存一份。 */
+    /**
+     * 页面标题只在入队那一刻知道，`DownloadRequest` 里没地方放，自己存一份。
+     *
+     * 这张表按完整 URL 存、只增不减（[forgetTitle] 负责在删除时清掉对应的那条）。超出
+     * [MAX_TITLES] 就丢掉一批：`SharedPreferences` 整个文件在进程启动时读进内存，只增不减
+     * 的话，下过很多次流之后会一直背着一堆没人再看的键。丢掉的只是显示用的标题，
+     * [titleOf] 会退回地址末段，不影响任何功能。
+     */
     private fun rememberTitle(context: Context, url: String, title: String) {
         if (title.isBlank()) return
         runCatching {
+            val prefs = context.applicationContext
+                .getSharedPreferences(TITLE_PREFS, Context.MODE_PRIVATE)
+            prefs.edit().putString(url, title).apply()
+            if (prefs.all.size > MAX_TITLES) {
+                val editor = prefs.edit()
+                prefs.all.keys.asSequence()
+                    .filter { it != url }
+                    .take(prefs.all.size - MAX_TITLES)
+                    .forEach { editor.remove(it) }
+                editor.apply()
+            }
+        }
+    }
+
+    /** 这一条已经不在了，标题也别留着——否则每个下过的流都会永久留下一个键。 */
+    private fun forgetTitle(context: Context, url: String) {
+        runCatching {
             context.applicationContext
                 .getSharedPreferences(TITLE_PREFS, Context.MODE_PRIVATE)
-                .edit().putString(url, title).apply()
+                .edit().remove(url).apply()
         }
     }
 

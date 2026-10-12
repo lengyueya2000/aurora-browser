@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  系统处于深色模式时的冷启动底色。见 values/colors.xml 的说明——
+  这份抄的是 `DarkAuroraColors.bg`（`#0F172A`），两边由 WindowBackgroundTest 盯着。
+-->
+<resources>
+    <color name="aurora_window_bg">#0F172A</color>
+</resources>

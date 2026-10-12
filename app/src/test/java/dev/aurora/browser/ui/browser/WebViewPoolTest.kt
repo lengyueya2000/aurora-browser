@@ -252,15 +252,44 @@ class WebViewPoolTest {
         pool.onTrackerBlocked = { blocked++ }
         val client = shadowOf(web).webViewClient
 
+        // 追踪脚本都是子资源，所以这一组用例一律 mainFrame = false（主文档的情况见下一个测试）。
         pool.blockTrackers = { false }
-        assertThat(client.shouldInterceptRequest(web, FakeRequest("https://www.google-analytics.com/collect")))
-            .isNull()
+        assertThat(
+            client.shouldInterceptRequest(
+                web, FakeRequest("https://www.google-analytics.com/collect", mainFrame = false),
+            ),
+        ).isNull()
 
         pool.blockTrackers = { true }
-        assertThat(client.shouldInterceptRequest(web, FakeRequest("https://www.google-analytics.com/collect")))
-            .isNotNull()
-        assertThat(client.shouldInterceptRequest(web, FakeRequest("https://a.com/app.js"))).isNull()
+        assertThat(
+            client.shouldInterceptRequest(
+                web, FakeRequest("https://www.google-analytics.com/collect", mainFrame = false),
+            ),
+        ).isNotNull()
+        assertThat(
+            client.shouldInterceptRequest(web, FakeRequest("https://a.com/app.js", mainFrame = false)),
+        ).isNull()
         assertThat(blocked).isEqualTo(1)
+    }
+
+    /**
+     * 主文档**永远不拦**，哪怕它命中了追踪名单。
+     *
+     * 名单是按域名匹配的，而不少站的播放页/跳转页自己就挂在统计域名下。拦下来我们回一个空
+     * 响应，用户看到的是「点了链接，整页纯白」——而且地址栏还停在那个域名上，完全看不出发生
+     * 了什么。追踪脚本不会是主文档，拦主文档没有任何收益。
+     */
+    @Test fun mainFrameNavigationIsNeverBlockedAsTracker() {
+        val pool = newPool(CountingFactory())
+        val web = pool.get("a", false)
+        var blocked = 0
+        pool.onTrackerBlocked = { blocked++ }
+        pool.blockTrackers = { true }
+        val client = shadowOf(web).webViewClient
+
+        assertThat(client.shouldInterceptRequest(web, FakeRequest("https://www.google-analytics.com/collect")))
+            .isNull()
+        assertThat(blocked).isEqualTo(0)
     }
 
     /**
@@ -513,13 +542,14 @@ class WebViewPoolTest {
     @Test fun mediaBridgeHopsBackToTheMainThread() {
         val pool = newPool(CountingFactory())
         val web = pool.get("a", false)
-        var seen: Triple<String, String, String>? = null
-        pool.onMediaAction = { action, url, type -> seen = Triple(action, url, type) }
+        var seen: List<String>? = null
+        pool.onMediaAction = { tabId, action, url, type -> seen = listOf(tabId, action, url, type) }
         val bridge = shadowOf(web).getJavascriptInterface(MediaOverlay.BRIDGE_NAME) as MediaBridge
         bridge.onMediaAction("download", "https://a.com/v.mp4", "video/mp4")
         assertThat(seen).isNull() // 还没轮到主线程
         shadowOf(Looper.getMainLooper()).idle()
-        assertThat(seen).isEqualTo(Triple("download", "https://a.com/v.mp4", "video/mp4"))
+        // 桥绑在这个标签上，宿主拿到的第一个参数必须是 "a"——不是「当前激活的标签」。
+        assertThat(seen).containsExactly("a", "download", "https://a.com/v.mp4", "video/mp4")
     }
 
     /** 标签不存在时立刻回空列表，别把回调挂死。 */

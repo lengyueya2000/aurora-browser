@@ -37,6 +37,16 @@ class EpisodeSniffer(private val context: Context) {
 
     private val main = Handler(Looper.getMainLooper())
 
+    /**
+     * 已经排进主线程队列的待办（查结果的几拍 + 超时那一次）。
+     *
+     * 留着是为了能**撤回**。这些 Runnable 用 `token` 自我作废（迟到的回调不会交付错的结果），
+     * 但「不交付」不等于「不执行」：一次嗅探会往队列里压 6 个任务，最长拖到 12 秒后。用户
+     * 连着切几集、或者嗅探一成功就退出播放器时，队列里还压着一串早已没意义的唤醒——每次都
+     * 会把这个 sniffer 对象（连同它引用的 Activity context）拉起来看一眼再丢掉。撤掉更干净。
+     */
+    private val pending = mutableListOf<Runnable>()
+
     private var web: WebView? = null
     private var token = 0
     private var delivered = false
@@ -77,9 +87,9 @@ class EpisodeSniffer(private val context: Context) {
 
         // 按时间表查结果：页面加载完就查，没加载完的拍次只在最后一拍兜底。
         ChecksMs.forEachIndexed { i, gap ->
-            main.postDelayed({ check(id, force = i == ChecksMs.lastIndex) }, gap)
+            schedule(gap) { check(id, force = i == ChecksMs.lastIndex) }
         }
-        main.postDelayed({ timeout(id) }, timeoutMs)
+        schedule(timeoutMs) { timeout(id) }
 
         runCatching { view.loadUrl(pageUrl) }
             .onFailure { fail(id, "这一集的页面打不开") }
@@ -130,6 +140,26 @@ class EpisodeSniffer(private val context: Context) {
         return view
     }
 
+    /**
+     * 排一个待办并记下来，好让 [release] 能撤回。
+     *
+     * 执行前先把自己从 [pending] 里摘掉：不然一轮嗅探结束后，这个列表里会攒下已经跑完的
+     * 条目，而 `removeCallbacks` 对已经执行过的 Runnable 是空操作，清不清都一样——但它会
+     * 一直涨，直到下一次 `release` 才被清空。
+     */
+    private fun schedule(delayMs: Long, block: () -> Unit) {
+        // 用 object 而不是 `Runnable { }`：lambda 里的 `this` 是外层的 EpisodeSniffer，
+        // 拿它去 `pending.remove` 会摘错对象（而且根本编译不过）。
+        val runnable = object : Runnable {
+            override fun run() {
+                pending.remove(this)
+                block()
+            }
+        }
+        pending += runnable
+        main.postDelayed(runnable, delayMs)
+    }
+
     private fun check(id: Int, force: Boolean = false) {
         if (delivered || token != id) return
         // 页面还没加载完时先不交付：站点常在正式流之前先拉一个预览片，早拿会拿错。
@@ -161,6 +191,9 @@ class EpisodeSniffer(private val context: Context) {
     private fun timeout(id: Int) = fail(id, "等这一集的地址等超时了")
 
     private fun release() {
+        // 先把队列里的待办撤掉：销毁窗口之后它们只会白跑一趟，还会把 context 多留一会儿。
+        pending.forEach { main.removeCallbacks(it) }
+        pending.clear()
         MediaSniffer.clear(TabId)
         val view = web ?: return
         web = null

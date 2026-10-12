@@ -1,6 +1,7 @@
 package dev.aurora.browser.media
 
 import android.net.Uri
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
@@ -66,8 +67,15 @@ internal class RefererFallbackDataSource(
         }
     }
 
+    /**
+     * 没有委托对象（`open` 之前、或 `close` 之后）时报**输入结束**，不能报 0。
+     *
+     * `DataSource.read` 的 0 是「这次一个字节也没读到」，调用方（Media3 的加载器）会认为
+     * 还有数据、立刻再调一次——变成一个占满 CPU 的死循环。只有 -1
+     * （[C.RESULT_END_OF_INPUT]）才是「没得读了」这个明确信号。
+     */
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-        delegate?.read(buffer, offset, length) ?: 0
+        delegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
 
     override fun getUri(): Uri? = delegate?.uri
 

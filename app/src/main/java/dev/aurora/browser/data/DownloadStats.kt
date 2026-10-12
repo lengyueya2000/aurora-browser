@@ -8,6 +8,12 @@ package dev.aurora.browser.data
  * 多采几次再算总差——窗口越长越稳，也越迟钝。
  *
  * 时间由调用方传进来（真机上用 `SystemClock.elapsedRealtime()`），这样这个类是纯的、能单测。
+ *
+ * **三个方法都加了锁。** 一个实例会被两条线程同时用：播放器里那个每 700ms 跑一次的下载
+ * 轮询在后台线程上，下载管理页在主线程上（画中画里开着播放器、再打开下载管理就是这个
+ * 情形）。`samples` 是普通 `mutableMapOf`，并发 `getOrPut` 与 `keys.retainAll` 会撞出
+ * `ConcurrentModificationException`——而调用方（`OfflineMedia.items`）把整个方法包在
+ * `runCatching` 里，异常会被吞掉、列表静默变空，看起来就像「我的离线缓存没了」。
  */
 class DownloadSpeed(
     /** 参与计算的样本窗口。 */
@@ -25,6 +31,7 @@ class DownloadSpeed(
      * 样本还不够时返回 0——「还不知道」和「一点没动」在界面上是两种说法，调用方按 0 当成
      * 「暂时没有速度可报」处理即可。
      */
+    @Synchronized
     fun sample(key: String, bytes: Long, nowMs: Long): Long {
         val queue = samples.getOrPut(key) { ArrayDeque() }
         val last = queue.lastOrNull()
@@ -49,11 +56,13 @@ class DownloadSpeed(
     }
 
     /** 这条已经不存在了（被删掉），丢掉它的样本，免得这张表一直长。 */
+    @Synchronized
     fun forget(key: String) {
         samples.remove(key)
     }
 
     /** 只保留这些 key。列表刷新后调用，用来清掉已删除条目的样本。 */
+    @Synchronized
     fun retain(keys: Set<String>) {
         samples.keys.retainAll(keys)
     }

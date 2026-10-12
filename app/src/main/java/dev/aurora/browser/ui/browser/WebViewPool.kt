@@ -101,8 +101,11 @@ class WebViewPool(
         { _, _ -> }
     var onHideFullscreenView: () -> Unit = {}
     // 页面里注入的「全屏 / 下载 / 投屏」按钮被点（见 MediaOverlay）。回调保证在主线程。
-    // 第三个参数是附加信息，见 [MediaBridge]。
-    var onMediaAction: (action: String, url: String, extra: String) -> Unit = { _, _, _ -> }
+    // 第一个参数是**发起调用的那个标签**——不是「当前激活的标签」：后台标签页里的脚本也能
+    // 调这个桥，用激活标签去解释就会张冠李戴。见 [MediaBridge]。
+    // 最后一个参数是附加信息。
+    var onMediaAction: (tabId: String, action: String, url: String, extra: String) -> Unit =
+        { _, _, _, _ -> }
     @Volatile var blockTrackers: () -> Boolean = { false }
 
     private val views = mutableMapOf<String, WebView>()
@@ -143,9 +146,6 @@ class WebViewPool(
 
     /** 桥的方法跑在 WebView 的 JS 线程上，回调宿主前先切回主线程。 */
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
-    private val mediaBridge = MediaBridge { action, url, extra ->
-        main.post { onMediaAction(action, url, extra) }
-    }
 
     /**
      * 这个标签页当前该拿去播放的地址（真实流，不是页面里的 `blob:`）。
@@ -470,6 +470,11 @@ class WebViewPool(
     private fun destroy(webView: WebView) {
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.stopLoading()
+        // 先把 JS 接口摘掉再 destroy：`destroy()` 之后 WebView 内部还有一堆异步收尾，
+        // 页面里没断的定时器仍可能在这中间再打一次桥。接口还在的话，那次调用会走到已经
+        // 被释放的标签上——宿主按 tabId 找不到标签（拿到的 tab 是 null）还好，怕的是
+        // 标签 id 已经被新标签复用，动作就落到了别人身上。
+        runCatching { webView.removeJavascriptInterface(MediaOverlay.BRIDGE_NAME) }
         webView.webViewClient = WebViewClient()
         webView.webChromeClient = null
         webView.destroy()
@@ -602,8 +607,14 @@ class WebViewPool(
             applyHardenedSettings(this, incognito)
             applyUserAgent(this, desktopMode())
             // 页面上的「下载 / 投屏」按钮靠它回宿主。@JavascriptInterface 的方法只暴露
-            // 这一个，且宿主会校验动作名与地址（见 MediaAction）。
-            addJavascriptInterface(mediaBridge, MediaOverlay.BRIDGE_NAME)
+            // 这一个，且宿主会校验动作名与地址（见 MediaAction）。**每个 WebView 一个桥**，
+            // 桥里绑着这个标签的 id，宿主才能分辨调用来自哪个标签。
+            addJavascriptInterface(
+                MediaBridge(tabId) { from, action, url, extra ->
+                    main.post { onMediaAction(from, action, url, extra) }
+                },
+                MediaOverlay.BRIDGE_NAME,
+            )
 
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
@@ -697,6 +708,11 @@ class WebViewPool(
                     // 页面里的 `<video>` 只有 MSE 的 `blob:`，拿不到地址。见 MediaSniffer。
                     MediaSniffer.record(tabId, request.url.toString())
                     if (!blockTrackers()) return null
+                    // **主文档永远放行。** 名单是按域名匹配的，而不少站的播放页、跳转页自己
+                    // 就挂在统计域名下（短链、聚合站尤其常见）。命中之后我们回一个空响应，
+                    // 用户看到的就是一片纯白、地址栏还停在那个域名——「点了链接网页全白」。
+                    // 追踪脚本永远不是主文档，拦主文档没有任何收益，只有白屏这一个后果。
+                    if (request.isForMainFrame) return null
                     if (!dev.aurora.browser.domain.TrackerBlocklist.isBlocked(request.url.toString())) {
                         return null
                     }

@@ -1,5 +1,16 @@
 <resources>
+    <!--
+      windowBackground 跟着主题走，而不是钉死黑色。
+
+      钉死黑色在深色主题下看不出问题，浅色主题（1.16 起是默认）下就是「点开应用先黑一下，
+      然后整屏变成纸白」——冷启动那一下的闪黑。系统画启动窗口时 Compose 还没跑起来，
+      拿不到令牌，所以这里的值来自 XML（见 values/colors.xml 与 values-night/colors.xml）。
+
+      用户在设置里**强制**的主题与系统不一致时，这两份值仍然只能跟系统走（启动窗口在
+      读偏好之前就画完了）；那一下的色差由 MainActivity 在 onCreate 里补正，
+      见那里对 window.setBackgroundDrawable 的调用。
+    -->
     <style name="Theme.Aurora" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowBackground">@color/aurora_window_bg</item>
     </style>
 </resources>

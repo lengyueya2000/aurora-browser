@@ -145,18 +145,12 @@ class PlayerActivity : ComponentActivity() {
     private var savedCutoutMode: Int? = null
 
     /**
-     * 当前在播的真实地址。切集时会被改写（见 [onEpisodeStreamReady]），因此带一个 setter：
-     * 地址一换就把 [sawDownloadRunning] 复位，免得上一集「看到在下载」的状态跟到下一集，
-     * 让新一集挂上一行本不该出现的下载状态。
+     * 当前在播的真实地址。切集时会被改写（见 [onEpisodeStreamReady]）。
      *
      * `@Volatile`：下载轮询在后台线程读它（见 [startDownloadTicker]），写入在主线程。
      */
     @Volatile
     private var mediaUrl: String = ""
-        set(value) {
-            if (value != field) sawDownloadRunning = false
-            field = value
-        }
     private var mediaTitle: String = ""
     private var mediaReferer: String? = null
 
@@ -178,6 +172,17 @@ class PlayerActivity : ComponentActivity() {
 
     /** 是否正处在小窗里。小窗里要把控制层与手势全部让开，否则会盖住系统的展开/关闭按钮。 */
     private val inPip = mutableStateOf(false)
+
+    /**
+     * 下载进度的通知权限（Android 13+ 的运行时权限）。
+     *
+     * 必须在 `onCreate` 之前注册（`ComponentActivity` 的硬性要求），所以放在字段上；
+     * 请求时机在用户点「下载」那一刻，见 [downloadVideo]。拒绝的后果只是没有那条通知，
+     * 下载本身照跑。
+     */
+    private val notificationPermission = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { /* 拒了也不做什么：下载照常，只是通知栏里看不见进度。 */ }
 
     // ── 追剧模式（见 `docs/superpowers/specs/2026-10-11-binge-mode-design.md`）──
 
@@ -226,10 +231,15 @@ class PlayerActivity : ComponentActivity() {
      * 用来决定「下完之后那一行还留不留」：自己点的下载，下完了应该看到「已离线缓存 · 899 MB」
      * 收个尾；而一进来就已经下好的那一集（本来就是离线播的），再挂一行状态纯属多余。
      *
+     * 记的是**哪个地址**在下载，不是一个布尔量。以前是布尔量 + 一个「换地址就复位」的
+     * setter，有两个洞：后台轮询可能读到一半地址被换掉（前半段用旧地址查、后半段用新地址
+     * 查），以及复位之后一条在飞的查询又把旧地址的结果写回来——新一集于是挂上一行本不该
+     * 出现的下载状态。记地址就没有这两个洞：换集之后旧地址的答案自然对不上。
+     *
      * 后台线程（下载轮询）会读写它，所以 `@Volatile`。
      */
     @Volatile
-    private var sawDownloadRunning = false
+    private var sawDownloadRunningFor: String? = null
 
     /** 当前是不是「请求桌面版网站」。切集时嗅探窗口要用同一个 UA，否则站点给另一套页面。 */
     private var desktopMode = false
@@ -408,6 +418,13 @@ class PlayerActivity : ComponentActivity() {
      * 否则一季看完会堆一串已经看完的集。顺带记一笔「已看」，供选集面板标状态。
      */
     private fun onEpisodeEnded() {
+        // 正在切集时旧流播完，不算「这一集看完了」。
+        //
+        // 切集期间旧流是故意继续播的（规格 6.5：嗅探要十几秒，不能让用户干等），所以
+        // 「快播完时点了下一集」这个很常见的动作会走到这里：`switchTo` 刚把卡片取消掉，
+        // 旧流紧接着 `STATE_ENDED`，于是又按**旧**的集号算出一个「下一集」，把卡片弹在
+        // 正在起播的新一集上；倒计时结束还会把新一集再拆一次重来。
+        if (switchingLabel.value != null) return
         prefs?.forget(mediaUrl)
         markWatched()
         val play = episodePlay.value
@@ -728,6 +745,8 @@ class PlayerActivity : ComponentActivity() {
 
     /** 下载：直链交给系统下载器，HLS 进离线缓存——分岔在 [MediaDownload] 里。 */
     private fun downloadVideo() {
+        // 顺手问一次通知权限：下载进度只有通知栏那一条，没有它用户看不到「还在下」。
+        NotificationPermission.requestIfNeeded(this, notificationPermission)
         val result = MediaDownload.enqueue(
             context = this,
             url = mediaUrl,
@@ -771,16 +790,24 @@ class PlayerActivity : ComponentActivity() {
 
     /** 当前视频的下载状态；这个地址没在下载、也没有刚刚下完，就返回 `null`。 */
     private fun readDownloadStatus(): DownloadStatus? {
-        val offline = OfflineMedia.items(this).firstOrNull { it.url == mediaUrl }
+        // 地址只读一次：这个方法跑在后台线程上，读两次的话中途切集会让两次查询对不上。
+        val url = mediaUrl
+        // `itemsOrNull` 读不出来（索引库坏了）返回 null，这时当作「这个地址没在下载」：
+        // 播放器不该因为一条状态行读不到就什么都不放。列表页那边才会把失败说出来。
+        val offline = OfflineMedia.itemsOrNull(this)?.firstOrNull { it.url == url }
         if (offline != null) {
-            if (offline.isRunning) sawDownloadRunning = true
+            if (offline.isRunning) sawDownloadRunningFor = url
             // 一进来就已经下好的不显示：那一集本来就是离线播的，再挂一行状态属于噪音。
-            return if (offline.isRunning || sawDownloadRunning) offlineDownloadStatus(offline) else null
+            return if (offline.isRunning || sawDownloadRunningFor == url) {
+                offlineDownloadStatus(offline)
+            } else {
+                null
+            }
         }
-        val file = downloads.query().firstOrNull { it.uri == mediaUrl }
+        val file = downloads.query().firstOrNull { it.uri == url }
         if (file != null) {
-            if (file.isRunning) sawDownloadRunning = true
-            return if (file.isRunning || sawDownloadRunning) fileDownloadStatus(file) else null
+            if (file.isRunning) sawDownloadRunningFor = url
+            return if (file.isRunning || sawDownloadRunningFor == url) fileDownloadStatus(file) else null
         }
         return null
     }
@@ -1092,6 +1119,11 @@ private fun PlayerScreen(
         }
     }
 
+    // 选集面板是压在最上面的一层（连控制层都盖住），返回键该先收它。
+    // 以前只有下面那个管结束卡片的 BackHandler，于是面板开着时按返回会直接退出播放器——
+    // 用户丢的是正在看的那一集，还得从头再进一次。
+    BackHandler(enabled = sheetOpen && endCard == null) { onCloseEpisodes() }
+
     // 片尾倒计时期间按返回 = 取消（规格 6.3）。没有卡片时不接管返回键：
     // 切集途中的返回该退出播放器（嗅探窗口由 onDestroy 销毁）。
     BackHandler(enabled = endCard != null) { onCancelEndCard() }
@@ -1224,7 +1256,13 @@ private fun PlayerScreen(
                 panel = panel,
                 qualityOptions = qualityOptions,
                 onPanel = { panel = it },
-                onTogglePlay = { if (player.isPlaying) player.pause() else player.play() },
+                // 判据是 `playWhenReady`（用户想不想播），**不是** `isPlaying`。
+                //
+                // 缓冲中这两者会分叉：`playWhenReady` 已经是 true、`isPlaying` 还是 false。
+                // 用 `isPlaying` 判断的话，用户在缓冲时点中间那颗按钮会走 `else` 分支去调
+                // `play()`——而它本来就在等播放，等于什么都没发生：转圈继续转，点了没反应。
+                // 用 `playWhenReady` 就对了：缓冲时点一下是暂停，下一帧换回播放三角。
+                onTogglePlay = { if (player.playWhenReady) player.pause() else player.play() },
                 onSeekBy = { delta ->
                     // 时长未知（直播 / 还没 prepare 完）时上界不能当 0，否则每次快进快退
                     // 都会跳到第 0 秒。口径统一在 PlayerGestures.seekTarget 里。

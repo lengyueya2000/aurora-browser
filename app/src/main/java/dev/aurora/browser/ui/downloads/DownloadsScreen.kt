@@ -73,6 +73,13 @@ fun DownloadsScreen(
      * 删掉一条后这个数立刻变小，就是真删了（OfflineMedia.cacheBytes）。
      */
     cacheBytes: Long = 0L,
+    /**
+     * 离线缓存的索引没读出来（`OfflineMedia.itemsOrNull` 返回了 null）。
+     *
+     * 和「一条离线缓存都没有」是两件事，不能都画成空状态：真失败时列表是空的、体积也是 0，
+     * 用户看到「还没有已完成的下载」会以为自己的缓存被清了。这里明说读失败。
+     */
+    offlineLoadFailed: Boolean = false,
     onOpenOffline: (OfflineItem) -> Unit = {},
     onRemoveOffline: (OfflineItem) -> Unit = {},
     onPauseOffline: (OfflineItem) -> Unit = {},
@@ -113,14 +120,32 @@ fun DownloadsScreen(
             )
         }
 
+        // 索引读失败时压一条在列表上方：空列表配上这句，才不会被误读成「缓存被清空了」。
+        if (offlineLoadFailed) {
+            Text(
+                text = "离线缓存列表读取失败，下面显示的可能不完整",
+                color = c.danger,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(
+                    start = AuroraSpacing.l,
+                    end = AuroraSpacing.l,
+                    top = AuroraSpacing.s,
+                ),
+            )
+        }
+
         if (rows.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(AuroraSpacing.xl),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = if (tab == DownloadTab.RUNNING) "没有进行中的下载" else "还没有已完成的下载",
-                    color = c.textMuted,
+                    text = when {
+                        offlineLoadFailed && tab == DownloadTab.DONE -> "离线缓存列表读取失败"
+                        tab == DownloadTab.RUNNING -> "没有进行中的下载"
+                        else -> "还没有已完成的下载"
+                    },
+                    color = if (offlineLoadFailed && tab == DownloadTab.DONE) c.danger else c.textMuted,
                 )
             }
         } else {

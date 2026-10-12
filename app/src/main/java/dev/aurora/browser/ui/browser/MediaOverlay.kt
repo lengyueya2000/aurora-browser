@@ -166,6 +166,13 @@ object MediaAction {
 
     private val ALLOWED = setOf(PLAY, DOWNLOAD, CAST)
 
+    /**
+     * 动作名与地址的格式校验。
+     *
+     * 空地址仍然放行，但**不再是「无条件放行」**：它表示「页面里这个 `<video>` 的源取不到」
+     * （MSE 站点常见），宿主得先用嗅探结果兜底。真正决定要不要执行的是调用方——见
+     * [dev.aurora.browser.ui.browser.BrowserScreen] 里那段「页面得先真的有个视频」的判断。
+     */
     fun isValid(action: String, url: String): Boolean =
         action in ALLOWED && (
             url.isEmpty() ||
@@ -180,16 +187,25 @@ object MediaAction {
  * `@JavascriptInterface` 的方法跑在 WebView 的 JS 线程上，**不是**主线程，
  * 所以这里只负责转交，由调用方（[WebViewPool]）切回主线程再碰 UI 和系统服务。
  *
+ * **每个 WebView 一个实例**，各自绑定自己的 tabId。曾经全池共用一份：桥本身不认识标签，
+ * 宿主只能用「当前激活的那个标签」去解释调用——后台标签页里的脚本一调，动作就落到了前台
+ * 那个标签身上，拿它的地址去校验、把它的页面当 Referer。绑定之后调用方就能按真正的来源
+ * 处理，后台标签的调用会被直接丢掉（它本来也不该在用户没看的时候弹播放器）。
+ *
+ * @param tabId 这个桥所属的标签。由 [WebViewPool.create] 在注册时捕获。
  * @param extra 附加信息，按动作解释：`play` 是当前播放到第几秒（换到内置播放器接着播），
  *   其余动作为空串。
  */
-class MediaBridge(private val onAction: (action: String, url: String, extra: String) -> Unit) {
+class MediaBridge(
+    private val tabId: String,
+    private val onAction: (tabId: String, action: String, url: String, extra: String) -> Unit,
+) {
     @JavascriptInterface
     fun onMediaAction(action: String?, url: String?, extra: String?) {
         // 参数声明成可空：页面里任意脚本（含跨域 iframe）都能直接传 `null` 进来，
         // 声明成非空的话会先撞在 Kotlin 生成的非空检查上抛异常，而不是被这里挡掉。
         if (action == null || url == null) return
         if (!MediaAction.isValid(action, url)) return
-        onAction(action, url, extra.orEmpty())
+        onAction(tabId, action, url, extra.orEmpty())
     }
 }
