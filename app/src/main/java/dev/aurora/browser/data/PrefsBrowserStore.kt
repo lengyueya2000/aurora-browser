@@ -27,13 +27,13 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
     private val _history = MutableStateFlow(readHistory())
     override val history: StateFlow<List<HistoryEntry>> = _history.asStateFlow()
 
-    private val _engine = MutableStateFlow(SearchEngine.fromName(prefs.getString(KEY_ENGINE, null)))
+    private val _engine = MutableStateFlow(SearchEngine.fromName(prefs.readString(KEY_ENGINE)))
     override val searchEngine: StateFlow<SearchEngine> = _engine.asStateFlow()
 
-    private val _block = MutableStateFlow(prefs.getBoolean(KEY_BLOCK, true))
+    private val _block = MutableStateFlow(prefs.readBoolean(KEY_BLOCK, true))
     override val blockTrackers: StateFlow<Boolean> = _block.asStateFlow()
 
-    private val _desktop = MutableStateFlow(prefs.getBoolean(KEY_DESKTOP, false))
+    private val _desktop = MutableStateFlow(prefs.readBoolean(KEY_DESKTOP, false))
     override val desktopMode: StateFlow<Boolean> = _desktop.asStateFlow()
 
     override fun addBookmark(title: String, url: String) {
@@ -95,13 +95,26 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
     }
 
     private fun readArray(key: String): List<JSONObject> {
-        val raw = prefs.getString(key, null) ?: return emptyList()
+        val raw = prefs.readString(key) ?: return emptyList()
         // 存储损坏时宁可当空列表，也不要让应用在启动路径上崩。
         return runCatching {
             val array = JSONArray(raw)
             (0 until array.length()).map { array.getJSONObject(it) }
         }.getOrDefault(emptyList())
     }
+
+    /**
+     * 标量读取的兜底。
+     *
+     * 上面那句「不要在启动路径上崩」对数组做了，标量却漏了：键存过别的类型时
+     * （旧版本改过口径、备份还原回来一份别家的 prefs 文件）`getString`/`getBoolean`
+     * 会抛 `ClassCastException`，而这几行都在构造函数的属性初始化里——一崩就是启动即崩。
+     */
+    private fun SharedPreferences.readString(key: String): String? =
+        runCatching { getString(key, null) }.getOrNull()
+
+    private fun SharedPreferences.readBoolean(key: String, fallback: Boolean): Boolean =
+        runCatching { getBoolean(key, fallback) }.getOrDefault(fallback)
 
     private fun writeBookmarks(list: List<Bookmark>) {
         val array = JSONArray()

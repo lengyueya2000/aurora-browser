@@ -87,9 +87,16 @@ class FaviconStore internal constructor(context: Context) {
     private fun cacheDir(): File =
         File(appContext.cacheDir, DIR).apply { if (!isDirectory) mkdirs() }
 
-    /** 主机名当键之前先规整：大小写、前后空格、以及可能带上的端口。 */
+    /** 主机名当键之前先规整：大小写、前后空格、端口，以及不能出现在文件名里的字符。 */
     private fun key(host: String): String =
-        host.trim().lowercase().removeSuffix(".").replace(':', '_')
+        host.trim().lowercase().removeSuffix(".")
+            .replace(':', '_')
+            // 路径分隔符与 `..` 不该出现在 host 里（`URI.host` 出不来），但这里是文件名
+            // 的唯一把关处：哪天 host 从历史/用户输入取，`File(cacheDir, "$key.img")`
+            // 就成了目录穿越的落点。规整不了的主机名直接当空键，调用方会跳过它。
+            .replace('/', '_')
+            .takeIf { it.isNotBlank() && !it.contains("..") }
+            .orEmpty()
 
     companion object {
         private const val DIR = "favicons"
@@ -154,7 +161,9 @@ internal object FaviconCodec {
      */
     fun normalizeIcon(bytes: ByteArray): ByteArray? {
         if (bytes.isEmpty()) return null
-        if (isIco(bytes)) return pngFromIco(bytes)
+        // ICO 的目录项字段来自网络，解析里有减法、乘法和两个 Int 相加；兜一层 runCatching
+        // 是为了「格式再怪也只当这个候选没取到」，而不是让首页崩掉（见 pngFromIco）。
+        if (isIco(bytes)) return runCatching { pngFromIco(bytes) }.getOrNull()
         // 不是 ICO 就直接交出去：是不是能解的图片由 decode 判断，这里不做格式白名单
         // ——站点用 WebP/GIF 也不稀奇。
         return bytes
@@ -184,7 +193,11 @@ internal object FaviconCodec {
             val height = bytes[entry + 1].toInt() and 0xFF
             val length = readU32(bytes, entry + 8) ?: continue
             val offset = readU32(bytes, entry + 12) ?: continue
-            if (length <= 0 || offset < 0 || offset + length > bytes.size) continue
+            // 用 Long 相加再比：`readU32` 回来的是**有符号** Int，两个大数（比如
+            // offset=1000、length=0x7FFFFFFF）相加会溢出成负数，溢出后
+            // `offset + length > bytes.size` 放行，下面的 copyOfRange 就抛异常。
+            if (length <= 0 || offset < 0) continue
+            if (offset.toLong() + length.toLong() > bytes.size.toLong()) continue
             val area = (if (width == 0) 256 else width) * (if (height == 0) 256 else height)
             if (area <= bestArea) continue
             val payload = bytes.copyOfRange(offset, offset + length)

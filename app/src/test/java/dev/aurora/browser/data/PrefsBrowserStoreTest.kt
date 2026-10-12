@@ -114,4 +114,23 @@ class PrefsBrowserStoreTest {
         prefs().edit().putString("search_engine", "YAHOO").commit()
         assertThat(PrefsBrowserStore(context).searchEngine.value).isEqualTo(SearchEngine.Default)
     }
+
+    /**
+     * 键存成了别的类型（旧版本改过口径、备份还原回来一份别家的文件）时也不能崩。
+     *
+     * `getBoolean` 遇到 String 会抛 `ClassCastException`，而这几行在构造函数里——
+     * 一崩就是启动即崩。兜底之后按「没存过」处理，退回默认值。
+     */
+    @Test fun typeMismatchedPreferencesFallBackToDefaults() {
+        prefs().edit()
+            .putString("block_trackers", "true")   // 本该是 Boolean
+            .putBoolean("search_engine", true)     // 本该是 String
+            .putInt("desktop_mode", 1)             // 本该是 Boolean
+            .commit()
+
+        val store = PrefsBrowserStore(context)
+        assertThat(store.blockTrackers.value).isTrue()
+        assertThat(store.searchEngine.value).isEqualTo(SearchEngine.Default)
+        assertThat(store.desktopMode.value).isFalse()
+    }
 }

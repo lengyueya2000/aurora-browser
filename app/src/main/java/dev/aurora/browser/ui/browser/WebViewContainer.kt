@@ -29,6 +29,8 @@ interface BrowserController {
  * WebView 比本组合活得久，捕获组合期 lambda 会拿到过期的回调。
  *
  * @param url 要加载的地址；`null`/空白表示新标签页，不加载。
+ * @param epoch 换代号：渲染进程崩溃后 +1，容器据此重新去池里取一个可用的 WebView
+ *   并重新加载当前地址（旧实例已经被 `destroy()`，贴上去也是白的）。
  */
 @Composable
 fun WebViewContainer(
@@ -38,8 +40,9 @@ fun WebViewContainer(
     modifier: Modifier = Modifier,
     url: String? = null,
     incognito: Boolean = false,
+    epoch: Int = 0,
 ) {
-    val webView = remember(tabId) { pool.get(tabId, incognito) }
+    val webView = remember(tabId, epoch) { pool.get(tabId, incognito) }
 
     // 把控制器指到当前这个 WebView 实例上。onDispose 只解绑，不销毁——
     // WebView 归 pool 所有，切标签后还要继续用。
@@ -57,7 +60,7 @@ fun WebViewContainer(
         onDispose { (controller as? BindableController)?.unbind() }
     }
 
-    LaunchedEffect(url) {
+    LaunchedEffect(url, epoch) {
         // 只加载「WebView 当前不在的地址」：onPageFinished 会把真实地址回写进 active.url，
         // 若不加这道判断，重定向/站内跳转会因 url 变化再触发一次 loadUrl（重复加载 + 多一条历史）。
         if (!url.isNullOrBlank() && url != webView.url) webView.loadUrl(url)

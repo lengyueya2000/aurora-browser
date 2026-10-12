@@ -34,9 +34,20 @@
         </intent>
     </queries>
 
+    <!--
+      关掉备份：应用数据里有 WebView 的 Cookie 罐、浏览历史、书签、离线视频和崩溃日志
+      （里面可能夹着 URL）。开着的话这些都在云备份 / `adb backup` 的提取范围内，
+      换机时会被搬走——对一个以隐私为卖点的浏览器来说不能接受。
+      代价是换机不迁移书签与历史（它们和 Cookie 一样算本机数据），这是有意的取舍。
+
+      Android 12 起 allowBackup 管不住「设备间迁移」，那份由 dataExtractionRules 决定
+      （见 res/xml/data_extraction_rules.xml，两个方向都排除干净）。
+    -->
     <application
         android:name=".AuroraApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"

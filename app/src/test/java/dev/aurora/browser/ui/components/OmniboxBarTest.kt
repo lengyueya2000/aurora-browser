@@ -59,6 +59,9 @@ class OmniboxBarTest {
         assertThat(hostOf("http://a.com")).isEqualTo("a.com")
         assertThat(hostOf(null)).isEqualTo("")
         assertThat(hostOf("not a url")).isEqualTo("not a url")
+        // 解析不出域名时只留「域名形状」的那一段：整条长 URL 铺出来会把一行挤爆。
+        assertThat(hostOf("www.a.com/page?q=1")).isEqualTo("www.a.com")
+        assertThat(hostOf("about:blank")).isEqualTo("about:blank")
     }
 
     @Test fun securityOfFollowsScheme() {

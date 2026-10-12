@@ -60,6 +60,27 @@ class BrowserViewModelTest {
         assertThat(vm.suggestions.value).isEmpty()
     }
 
+    /**
+     * 标题变化只改标题，不写历史。
+     *
+     * `onReceivedTitle` 在加载过程中会反复触发（先给占位标题、再换成真标题），把它当成
+     * 「加载完成」会在历史里留下一串同地址、不同标题的中间态。
+     */
+    @Test fun titleChangesOnlyUpdateTheTitle() {
+        val store = InMemoryBrowserStore()
+        val vm = BrowserViewModel(
+            tabs = TabRepository(),
+            back = dev.aurora.browser.domain.BackPressDispatcher(),
+            store = store,
+        )
+        val id = vm.activeTab.value.id
+
+        vm.onTitle(id, "半截标题")
+
+        assertThat(vm.activeTab.value.title).isEqualTo("半截标题")
+        assertThat(store.history.value).isEmpty()
+    }
+
     @Test fun backClosesMenuBeforeSwitchingSurface() {
         val vm = vm()
         vm.openTabSwitcher()

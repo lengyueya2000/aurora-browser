@@ -14,6 +14,7 @@ import android.view.Window
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.PermissionRequest
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -73,7 +74,22 @@ class WebViewPool(
     var onProgress: (tabId: String, progress: Int) -> Unit = { _, _ -> }
     var onPageStarted: (tabId: String) -> Unit = {}
     var onPageFinished: (tabId: String, title: String, url: String) -> Unit = { _, _, _ -> }
-    var onTrackerBlocked: (tabId: String) -> Unit = {}
+    /**
+     * 标题变化（`onReceivedTitle`）。
+     *
+     * 和 [onPageFinished] 分开：标题在加载过程中会反复变（站点先给占位标题再换成真标题，
+     * 单页应用切路由也会变），把它当「页面加载完成」会顺带多写一次历史、多连拍一轮缩略图。
+     */
+    var onTitle: (tabId: String, title: String) -> Unit = { _, _ -> }
+    /**
+     * 渲染进程崩了（`onRenderProcessGone`）：这个标签的 WebView 已经作废。
+     *
+     * 回调已经切回主线程（见实现处），界面层可以直接改状态。
+     */
+    var onRenderGone: (tabId: String) -> Unit = {}
+    // 下面两个会被 `shouldInterceptRequest`（WebView 的后台线程）读，而写入发生在主线程，
+    // 所以要 @Volatile：不加的话后台线程可能长期读到组合期那份旧 lambda——开关关掉了还在拦。
+    @Volatile var onTrackerBlocked: (tabId: String) -> Unit = {}
     var onSslError: (tabId: String) -> Unit = {}
     var onExternalUrl: (tabId: String, url: String) -> Unit = { _, _ -> }
     var onDownloadRequest: (tabId: String, request: DownloadRequest) -> Unit = { _, _ -> }
@@ -86,9 +102,17 @@ class WebViewPool(
     // 页面里注入的「全屏 / 下载 / 投屏」按钮被点（见 MediaOverlay）。回调保证在主线程。
     // 第三个参数是附加信息，见 [MediaBridge]。
     var onMediaAction: (action: String, url: String, extra: String) -> Unit = { _, _, _ -> }
-    var blockTrackers: () -> Boolean = { false }
+    @Volatile var blockTrackers: () -> Boolean = { false }
 
     private val views = mutableMapOf<String, WebView>()
+
+    /**
+     * 每个标签当前那一轮连拍的代号；标签被释放时抹掉，让还在飞的拍图自己作废。
+     *
+     * 见 [captureThumbnailAsync]：延时链和 `PixelCopy` 的回调都可能晚于 `dispose`。
+     */
+    private val captureTokens = mutableMapOf<String, Int>()
+    private var nextCaptureToken = 0
 
     /**
      * 标签缩略图（标签网格用），按 tabId 存。
@@ -135,6 +159,8 @@ class WebViewPool(
 
     fun dispose(tabId: String) {
         MediaSniffer.clear(tabId)
+        // 让还在飞的连拍作废：见 captureTokens。
+        captureTokens.remove(tabId)
         // 不 recycle：位图可能还在标签网格里画着，手动回收会让它在下一帧崩掉。
         // 位图在现代 Android 上就在 Java 堆里，去掉引用就够了。
         thumbnails.remove(tabId)
@@ -143,6 +169,7 @@ class WebViewPool(
 
     fun disposeAll() {
         views.keys.forEach { MediaSniffer.clear(it) }
+        captureTokens.clear()
         views.values.forEach(::destroy)
         views.clear()
         thumbnails.clear()
@@ -211,17 +238,26 @@ class WebViewPool(
         window: Window?,
         bottomInsetPx: Int = 0,
         onCaptured: (Bitmap?) -> Unit = {},
-    ) = attemptCapture(tabId, window, bottomInsetPx, attempt = 0, onCaptured = onCaptured)
+    ) {
+        // 记一个代号：`dispose` 会把它抹掉，于是这一轮（含已经在路上的 `PixelCopy` 回调）
+        // 自己作废，不会再往一个已经关掉的标签上写缩略图。
+        val token = ++nextCaptureToken
+        captureTokens[tabId] = token
+        attemptCapture(tabId, window, bottomInsetPx, attempt = 0, token = token, onCaptured = onCaptured)
+    }
 
     private fun attemptCapture(
         tabId: String,
         window: Window?,
         bottomInsetPx: Int,
         attempt: Int,
+        token: Int,
         onCaptured: (Bitmap?) -> Unit,
     ) {
         main.postDelayed({
-            captureNow(tabId, window, bottomInsetPx) { bitmap ->
+            if (captureTokens[tabId] != token) return@postDelayed
+            captureNow(tabId, window, bottomInsetPx, token) { bitmap ->
+                if (captureTokens[tabId] != token) return@captureNow
                 if (bitmap != null) {
                     onCaptured(bitmap)
                 } else if (attempt == CaptureGapsMs.lastIndex) {
@@ -229,7 +265,7 @@ class WebViewPool(
                     onCaptured(null)
                 }
                 if (attempt < CaptureGapsMs.lastIndex) {
-                    attemptCapture(tabId, window, bottomInsetPx, attempt + 1, onCaptured)
+                    attemptCapture(tabId, window, bottomInsetPx, attempt + 1, token, onCaptured)
                 }
             }
         }, CaptureGapsMs[attempt])
@@ -239,6 +275,7 @@ class WebViewPool(
         tabId: String,
         window: Window?,
         bottomInsetPx: Int,
+        token: Int,
         onCaptured: (Bitmap?) -> Unit,
     ) {
         val web = views[tabId]
@@ -259,6 +296,11 @@ class WebViewPool(
 
         val failure = runCatching {
             windowCapture.capture(window, source, raw) { ok ->
+                // 拍图期间标签被关掉了：位图丢掉，别往一个已经没了的标签上塞。
+                if (captureTokens[tabId] != token) {
+                    raw.recycle()
+                    return@capture
+                }
                 // 纯色同样当没拍到：窗口还没画出页面时抠到的是一整块底色。
                 val scaled = if (ok && !isBlankThumbnail(raw)) scaleToThumbnail(raw) else null
                 raw.recycle()
@@ -535,6 +577,10 @@ class WebViewPool(
                 ): Boolean {
                     val scheme = request.url.scheme?.lowercase().orEmpty()
                     if (scheme == "http" || scheme == "https") return false
+                    // 只放行主框架的跳转。子框架（广告 iframe）里的 `intent://`、`market://`
+                    // 不该在用户没点任何东西的情况下拉起外部应用——那是「打开网页就被拉走」
+                    // 的一条路子。拦掉它，页面本身的展示不受影响。
+                    if (!request.isForMainFrame) return true
                     onExternalUrl(tabId, request.url.toString())
                     return true
                 }
@@ -577,6 +623,29 @@ class WebViewPool(
                         "text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)),
                     )
                 }
+
+                /**
+                 * 渲染进程崩了。
+                 *
+                 * 不接管的话，WebView 默认会把整个应用一起带走（进程直接死），而视频站
+                 * 把渲染进程搞崩是常事。接管之后：这个 WebView 已经不能再用，先从池里
+                 * 摘掉并 `destroy()`（官方要求销毁，留着也画不出东西），再通知界面重建标签。
+                 *
+                 * 返回 true = 我们处理了，别让应用跟着崩。
+                 */
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: RenderProcessGoneDetail,
+                ): Boolean {
+                    Log.w(TAG, "渲染进程挂了，didCrash=${detail.didCrash()}")
+                    // 池里的 Map 与 `destroy()` 都只该在主线程动。这个回调按文档在 UI 线程，
+                    // 但挪回主线程的代价只是晚一帧，不必赌文档。
+                    main.post {
+                        dispose(tabId)
+                        onRenderGone(tabId)
+                    }
+                    return true
+                }
             }
 
             webChromeClient = object : WebChromeClient() {
@@ -585,7 +654,7 @@ class WebViewPool(
                 }
 
                 override fun onReceivedTitle(view: WebView, title: String?) {
-                    onPageFinished(tabId, title.orEmpty(), view.url.orEmpty())
+                    onTitle(tabId, title.orEmpty())
                 }
 
                 /**

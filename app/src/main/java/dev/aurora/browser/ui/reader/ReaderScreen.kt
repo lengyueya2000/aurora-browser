@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -87,6 +88,10 @@ fun ReaderScreen(
                 modifier = Modifier
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
+                    // 行长上限（规格 7「长文本」）：约 38 个全角字。按 em 近似换算，跟着
+                    // 字号缩放走——不然横屏或平板上正文会被拉成一整行，眼睛回行时找不到头。
+                    .widthIn(max = with(LocalDensity.current) { (15 * scale).sp.toDp() * 38 })
+                    .align(Alignment.CenterHorizontally)
                     .padding(horizontal = AuroraSpacing.xl),
                 verticalArrangement = Arrangement.spacedBy(AuroraSpacing.m),
             ) {

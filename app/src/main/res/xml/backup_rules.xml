@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 及以下的备份口径（Android 12+ 走 data_extraction_rules.xml）。
+
+  `allowBackup="false"` 本身已经关掉了备份，这份文件是把它写实：域清单与 12+ 的那份
+  保持一致，免得哪天有人把 allowBackup 打开时只想起一处。
+-->
+<full-backup-content>
+    <exclude domain="root" />
+    <exclude domain="file" />
+    <exclude domain="database" />
+    <exclude domain="sharedpref" />
+    <exclude domain="external" />
+</full-backup-content>

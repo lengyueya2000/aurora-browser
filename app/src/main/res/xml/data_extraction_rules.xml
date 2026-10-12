@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  备份与换机迁移的口径：一律关掉。
+
+  为什么要单独有这个文件：`android:allowBackup="false"` 从 Android 12 起管不住
+  「设备间迁移」，那一份由这里的规则决定。应用数据里有 WebView 的 Cookie 罐、浏览历史、
+  书签、离线视频，还有崩溃日志（异常消息里可能夹着 URL）——这些都不该离开设备。
+
+  域的清单与 `allowBackup` 时代的 fullBackupContent 一致：root / file / database /
+  sharedpref / external 全覆盖，两个方向都排除。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

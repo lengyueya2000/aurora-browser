@@ -23,11 +23,15 @@ class VideoFullscreenControllerTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
 
-    private class FakeHost : FullscreenHost {
+    private class FakeHost(private val attachSucceeds: Boolean = true) : FullscreenHost {
         val attached = mutableListOf<View>()
         val detached = mutableListOf<View>()
         val immersive = mutableListOf<Boolean>()
-        override fun attach(view: View) { attached += view }
+        override fun attach(view: View): Boolean {
+            if (!attachSucceeds) return false
+            attached += view
+            return true
+        }
         override fun detach(view: View) { detached += view }
         override fun setImmersive(on: Boolean) { immersive += on }
     }
@@ -126,5 +130,27 @@ class VideoFullscreenControllerTest {
 
         assertThat(callback.hiddenCount).isEqualTo(1)
         assertThat(host.immersive).containsExactly(true, false).inOrder()
+    }
+
+    /**
+     * 挂载失败时不能进全屏状态。
+     *
+     * 真机上这一条以前是死代码（宿主把失败吞掉、签名也不给返回值），于是「没挂上」也会
+     * 把 `isFullscreen` 置真：界面进沉浸式、返回键被当成「退出全屏」吃掉，画面却还是
+     * 网页里那个小窗——正是「点全屏变黑屏」的形态。
+     */
+    @Test fun aFailedAttachIsNotReportedAsFullscreen() {
+        val host = FakeHost(attachSucceeds = false)
+        val controller = VideoFullscreenController(host)
+        val callback = FakeCallback()
+
+        controller.show(newView(), callback)
+
+        assertThat(controller.isFullscreen.value).isFalse()
+        assertThat(host.immersive).isEmpty()
+        // WebView 还在等回调，必须告诉它这次全屏结束了，否则下次全屏拿不到画面。
+        assertThat(callback.hiddenCount).isEqualTo(1)
+        // 返回键不该被一个没成立的全屏吃掉。
+        assertThat(controller.onBackPressed()).isFalse()
     }
 }

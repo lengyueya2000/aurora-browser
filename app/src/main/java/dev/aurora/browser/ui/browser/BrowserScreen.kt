@@ -165,7 +165,9 @@ fun BrowserScreen(
     // 悬浮工具栏叠在网页上，抠图时会把那颗胶囊一起抠进去，所以裁掉它占的那一条。
     val toolbarInsetPx = with(LocalDensity.current) { BottomToolbarHeight.roundToPx() }
     // WebView 归池所有，离开组合不会自动销毁——必须显式回收，否则退出界面后仍在跑 JS。
-    DisposableEffect(Unit) {
+    // 键与上面 remember 的键对齐：`vm`/`activity` 换了就是换了一套池和控制器，
+    // 只写 `DisposableEffect(Unit)` 的话旧池连同里面还在跑 JS 的 WebView 永远不会释放。
+    DisposableEffect(pool, fullscreen) {
         onDispose {
             // 全屏视频是挂在窗口上的，退出界面时必须摘掉，否则会盖住下一个界面。
             fullscreen.hide()
@@ -182,6 +184,8 @@ fun BrowserScreen(
     var mediaSheet by remember { mutableStateOf<MediaSheet?>(null) }
     var resumeItems by remember { mutableStateOf(emptyList<ResumeEntry>()) }
     var tabThumbnails by remember { mutableStateOf(emptyMap<String, Bitmap>()) }
+    // 渲染进程崩溃后要换一个新 WebView 贴进组合（见 WebViewContainer 的 epoch 参数）。
+    var webViewEpoch by remember { mutableIntStateOf(0) }
 
     // 主页「继续观看」的数据来自内置播放器——另一个界面，但同一个进程、同一个偏好文件。
     // 每次回到前台重读一遍：不重读的话，看完一集退回来，卡片上还是进去之前的进度。
@@ -204,7 +208,7 @@ fun BrowserScreen(
             downloads = downloads,
         )
         vm.showMessage(result.message)
-        if (MediaUrls.isPlaylist(url)) {
+        if (MediaUrls.isStream(url)) {
             offlineItems = OfflineMedia.items(context)
         } else {
             downloadItems = downloads.query()
@@ -263,6 +267,14 @@ fun BrowserScreen(
                 }
             }
         }
+        // 标题变化只回写标题：它不算「加载完成」，不该顺带写历史、连拍缩略图。
+        pool.onTitle = { id, title -> vm.onTitle(id, title) }
+        // 渲染进程崩了：池里那个实例已经作废，换一个新 WebView 贴进组合并提示用户。
+        pool.onRenderGone = { id ->
+            vm.showMessage("页面渲染进程崩溃，已重置该标签")
+            tabThumbnails = tabThumbnails - id
+            webViewEpoch++
+        }
         pool.onTrackerBlocked = { vm.onTrackerBlocked() }
         pool.onSslError = { vm.onSslError() }
         pool.onExternalUrl = { _, url -> openExternal(context, url) }
@@ -281,14 +293,17 @@ fun BrowserScreen(
             val tabId = active.id
             pool.evaluateVideos(tabId) { sources ->
                 val fromPage = sources.firstOrNull { it.url == url }
-                if (fromPage == null) {
+                // 页面还没给出地址时（`<video>` 刚挂上、`src` 还没设）注入的脚本会传空串，
+                // 这是允许的（见 MediaAction.isValid）：直接拿嗅探结果兜底，而不是报「已失效」。
+                if (fromPage == null && url.isNotEmpty()) {
                     vm.showMessage("这个视频地址已经失效，刷新页面再试")
                     return@evaluateVideos
                 }
                 // 页面里那个地址是不是 MSE 的壳子（blob:/data:）。是的话它出了页面就取不到
                 // 内容，真实流只能靠网络层嗅探——欧乐影院这类站点就是这种情形。
                 val sniffed = pool.sniffedPlayableUrl(tabId)
-                val target = if (fromPage.isStream) sniffed else fromPage.url
+                val target = if (fromPage == null || fromPage.isStream) sniffed else fromPage.url
+                val mime = fromPage?.type.orEmpty()
                 when (action) {
                     MediaAction.PLAY -> {
                         if (target == null) {
@@ -305,7 +320,7 @@ fun BrowserScreen(
                         }
                     }
                     MediaAction.CAST -> {
-                        val ok = target != null && cast.playOnDevice(target, fromPage.type)
+                        val ok = target != null && cast.playOnDevice(target, mime)
                         if (!ok) vm.showMessage("没有能投屏播放该视频的应用")
                     }
                 }
@@ -438,6 +453,7 @@ fun BrowserScreen(
                             tabId = active.id,
                             url = active.url,
                             incognito = active.isIncognito,
+                            epoch = webViewEpoch,
                             modifier = Modifier.fillMaxSize(),
                         )
                         if (loadError != null) {

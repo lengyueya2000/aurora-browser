@@ -133,6 +133,8 @@ private fun SwitchRow(
         title = title,
         subtitle = subtitle,
         onClick = { onCheckedChange(!checked) },
+        // 整行是开关：语义上交给 SettingRow 的 toggleable（读屏才会念「已开启/已关闭」）。
+        toggleState = checked,
         trailing = {
             Switch(
                 checked = checked,

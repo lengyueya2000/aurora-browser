@@ -10,6 +10,7 @@ import android.os.Looper
 import android.view.View
 import android.view.Window
 import android.webkit.PermissionRequest
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -49,6 +50,13 @@ class WebViewPoolTest {
         override fun hasGesture(): Boolean = false
         override fun getMethod(): String = "GET"
         override fun getRequestHeaders(): MutableMap<String, String> = mutableMapOf()
+    }
+
+    /** 平台里这个构造函数被标了 deprecated（只能由框架构造），测试里照用，压掉警告。 */
+    @Suppress("DEPRECATION")
+    private class FakeRenderGone(private val didCrash: Boolean) : RenderProcessGoneDetail() {
+        override fun didCrash(): Boolean = didCrash
+        override fun rendererPriorityAtExit(): Int = 0
     }
 
     /**
@@ -147,6 +155,51 @@ class WebViewPoolTest {
         assertThat(client.shouldOverrideUrlLoading(web, FakeRequest("https://a.com"))).isFalse()
         assertThat(client.shouldOverrideUrlLoading(web, FakeRequest("http://a.com"))).isFalse()
         assertThat(external).isNull()
+    }
+
+    /**
+     * 子框架里的自定义 scheme 不交给系统。
+     *
+     * 不拦的话，广告 iframe 里的 `intent://`、`market://` 会在用户没点任何东西的情况下
+     * 拉起外部应用——一条「打开网页就被拉走」的路子。拦掉它不影响页面本身的展示。
+     */
+    @Test fun externalSchemesFromSubFramesAreBlocked() {
+        val f = CountingFactory()
+        val pool = newPool(f)
+        val web = pool.get("a", false)
+        var external: String? = null
+        pool.onExternalUrl = { _, url -> external = url }
+        val client = shadowOf(web).webViewClient
+
+        assertThat(
+            client.shouldOverrideUrlLoading(
+                web,
+                FakeRequest("intent://x#Intent;package=com.x;end", mainFrame = false),
+            ),
+        ).isTrue()
+        assertThat(external).isNull()
+    }
+
+    /**
+     * 渲染进程崩了：把那个已经作废的实例从池里摘掉，并通知界面换一个。
+     *
+     * 不接管这个回调的话，WebView 默认会让整个应用跟着一起死；而崩掉的实例画不出任何
+     * 东西，留着就是一个空白死壳子。
+     */
+    @Test fun aCrashedRendererRetiresTheTabAndNotifies() {
+        val f = CountingFactory()
+        val pool = newPool(f)
+        val web = pool.get("a", false)
+        var gone: String? = null
+        pool.onRenderGone = { gone = it }
+        val client = shadowOf(web).webViewClient
+
+        val handled = client.onRenderProcessGone(web, FakeRenderGone(didCrash = true))
+        idleMain()
+
+        assertThat(handled).isTrue()               // 自己处理了，别让进程跟着崩
+        assertThat(pool.retainedTabIds()).isEmpty() // 死实例不能留在池里
+        assertThat(gone).isEqualTo("a")
     }
 
     /**
@@ -825,5 +878,59 @@ class WebViewPoolTest {
         exhaustCaptureAttempts()
 
         assertThat(capture.sources).isEmpty()
+    }
+
+    /**
+     * 拍图期间标签被关掉：整条延时链作废，不再去拍。
+     *
+     * `attemptCapture` 是延时链，`dispose` 之后回调照样会跑；不设防的话它会接着往一个
+     * 已经关掉的标签上写缩略图。
+     */
+    @Test fun closingATabCancelsThePendingCaptureChain() {
+        val capture = FakeCapture()
+        val (pool, web) = attachedTab(capture)
+        var captured: Bitmap? = null
+
+        pool.captureThumbnailAsync("a", window(web)) { captured = it }
+        pool.dispose("a")
+        exhaustCaptureAttempts()
+
+        assertThat(capture.sources).isEmpty()
+        assertThat(captured).isNull()
+        assertThat(pool.thumbnail("a")).isNull()
+    }
+
+    /**
+     * `PixelCopy` 的回调可能晚于 `dispose`：结果回来时也要认出来并丢掉。
+     *
+     * 抠图是异步的（真机由窗口合成器回填），关标签与回调之间必然有窗口期——那一拍回来
+     * 时会无条件 `thumbnails.put`，给一个已经没了的标签重新塞回位图。
+     */
+    @Test fun aShotArrivingAfterCloseIsDropped() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        var deliver: ((Boolean) -> Unit)? = null
+        val pool = WebViewPool(
+            activity,
+            { ctx -> WebView(ctx) },
+            { false },
+            WindowCapture { _, _, dest, onResult ->
+                Canvas(dest).drawRect(
+                    0f, 0f, dest.width.toFloat(), dest.height / 2f,
+                    android.graphics.Paint().apply { color = android.graphics.Color.RED },
+                )
+                deliver = onResult // 先不回填，模拟「结果还在路上」
+            },
+            fakeBounds,
+        )
+        val web = pool.get("a", false)
+        activity.setContentView(web)
+        web.loadUrl("https://a.com")
+
+        pool.captureThumbnailAsync("a", window(web)) {}
+        advance(CaptureGap(0))
+        pool.dispose("a")
+        deliver!!.invoke(true)
+
+        assertThat(pool.thumbnail("a")).isNull()
     }
 }

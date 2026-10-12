@@ -113,6 +113,7 @@ fun PrivacyScreen(
                 title = "追踪器拦截",
                 subtitle = "命中 ${TrackerBlocklist.entries.size} 条主机名规则",
                 onClick = { onBlockChange(!blockEnabled) },
+                toggleState = blockEnabled,
                 trailing = {
                     Switch(
                         checked = blockEnabled,

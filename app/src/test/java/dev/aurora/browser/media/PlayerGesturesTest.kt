@@ -118,6 +118,29 @@ class PlayerGesturesTest {
         assertThat(PlayerGestures.doubleTapSeekMs(598_000L, 900f, 1080, 600_000L)).isEqualTo(600_000L)
     }
 
+    // ---------- 按一下跳几秒（±10 秒按钮） ----------
+
+    @Test fun seekByMovesRelativeToTheCurrentPosition() {
+        assertThat(PlayerGestures.seekTarget(60_000L, 10_000L, 600_000L)).isEqualTo(70_000L)
+        assertThat(PlayerGestures.seekTarget(60_000L, -10_000L, 600_000L)).isEqualTo(50_000L)
+        // 两端夹紧
+        assertThat(PlayerGestures.seekTarget(3_000L, -10_000L, 600_000L)).isEqualTo(0L)
+        assertThat(PlayerGestures.seekTarget(598_000L, 10_000L, 600_000L)).isEqualTo(600_000L)
+    }
+
+    /**
+     * 时长未知（直播 / 还没 prepare 完）时上界不能当 0。
+     *
+     * 之前写成 `duration.coerceAtLeast(0)`，`coerceIn(0, 0)` 会把每一次快进/快退都变成
+     * 「跳到第 0 秒」——用户按快退，画面直接回到片头。
+     */
+    @Test fun seekByDoesNotCollapseToZeroWhenTheDurationIsUnknown() {
+        assertThat(PlayerGestures.seekTarget(60_000L, 10_000L, 0L)).isEqualTo(70_000L)
+        assertThat(PlayerGestures.seekTarget(60_000L, -10_000L, 0L)).isEqualTo(50_000L)
+        // 直播里往回退也不能退到负数
+        assertThat(PlayerGestures.seekTarget(5_000L, -10_000L, 0L)).isEqualTo(0L)
+    }
+
     // ---------- 文本 ----------
 
     @Test fun timeIsFormattedWithHoursOnlyWhenNeeded() {

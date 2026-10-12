@@ -19,8 +19,14 @@ import dev.aurora.browser.media.ImmersiveMode
  * 切换没法在单测里断言，但「返回键归谁」「重复 show 会不会漏掉旧 View」这些逻辑必须测。
  */
 interface FullscreenHost {
-    /** 把自定义 View 挂到窗口内容之上。 */
-    fun attach(view: View)
+    /**
+     * 把自定义 View 挂到窗口内容之上；**挂不上回 `false`**。
+     *
+     * 返回值不是装饰：调用方靠它决定「这次全屏到底成没成」。实现里把失败吞掉回 `Unit`
+     * 的话，下面那句保护就是死代码——界面会进一个假的沉浸态（返回键被吃掉、画面还是
+     * 网页里那个小窗），正是「点全屏变黑屏」的形态。
+     */
+    fun attach(view: View): Boolean
 
     /** 从窗口移除自定义 View（不销毁，WebView 还要收回去）。 */
     fun detach(view: View)
@@ -54,7 +60,7 @@ class VideoFullscreenController(private val host: FullscreenHost) {
         if (_isFullscreen.value) hideInternal(notifyWebView = true)
         // 挂载失败（窗口状态异常、View 已被别处收走）就当作这次全屏没发生：
         // 既不留下一个吃掉返回键的假全屏状态，也不让 WebView 卡在「等回调」里。
-        if (runCatching { host.attach(view) }.isFailure) {
+        if (!runCatching { host.attach(view) }.getOrDefault(false)) {
             runCatching { onHidden.onCustomViewHidden() }
             return
         }
@@ -103,16 +109,16 @@ class ActivityFullscreenHost(private val activity: Activity) : FullscreenHost {
     /** 进入全屏前的屏幕方向，退出时原样恢复。 */
     private var savedOrientation: Int? = null
 
-    override fun attach(view: View) {
+    override fun attach(view: View): Boolean {
         // `android.R.id.content` 是窗口里所有内容的根，正常一定能找到；找不到就退到
-        // decorView，宁可铺得不够满，也不要让全屏静默失败。
+        // decorView，都没有才算挂不上——这时回 false，让调用方别进全屏状态。
         val root = activity.findViewById<ViewGroup>(android.R.id.content)
             ?: (activity.window?.decorView as? ViewGroup)
-            ?: return
+            ?: return false
         // 自定义 View 可能是从 WebView 内部搬过来的，先摘离原父节点，否则 addView 抛异常。
         (view.parent as? ViewGroup)?.removeView(view)
         view.setBackgroundColor(Color.BLACK)
-        runCatching {
+        val mounted = runCatching {
             root.addView(
                 view,
                 FrameLayout.LayoutParams(
@@ -122,6 +128,12 @@ class ActivityFullscreenHost(private val activity: Activity) : FullscreenHost {
             )
             view.bringToFront()
             view.requestFocus()
+        }.isSuccess
+        if (!mounted) {
+            // addView 成功但 bringToFront 抛异常这种半吊子情况：把 View 收回去，
+            // 否则它会永远留在窗口最上层，比不全屏更糟。
+            runCatching { (view.parent as? ViewGroup)?.removeView(view) }
+            return false
         }
         // 横屏视频在竖屏里全屏只能占中间一条，上下两条黑边白扔一半屏幕。系统浏览器
         // 全屏播放时都会把界面掰到横屏，这里照做；退出全屏时恢复原来的方向。
@@ -132,6 +144,7 @@ class ActivityFullscreenHost(private val activity: Activity) : FullscreenHost {
         // 刘海策略（铺到刘海区）跟着 [ImmersiveMode.enter] 一起设，不再重复一遍：
         // 这里先设、`setImmersive(true)` 再设，会把「改前值」覆盖成已改过的值，
         // 退出时就恢复不回去了。
+        return true
     }
 
     override fun detach(view: View) {
@@ -160,7 +173,8 @@ class ActivityFullscreenHost(private val activity: Activity) : FullscreenHost {
 
 /** 没有 Activity 时（预览 / 单测）的降级实现：只保留状态机，不碰窗口。 */
 object NoopFullscreenHost : FullscreenHost {
-    override fun attach(view: View) = Unit
+    /** 没有窗口可挂，也就不存在「挂不上」——状态机照常走，界面才测得到。 */
+    override fun attach(view: View) = true
     override fun detach(view: View) = Unit
     override fun setImmersive(on: Boolean) = Unit
 }

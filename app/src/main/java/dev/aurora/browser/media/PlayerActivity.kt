@@ -640,8 +640,11 @@ private fun PlayerScreen(
                 onPanel = { panel = it },
                 onTogglePlay = { if (player.isPlaying) player.pause() else player.play() },
                 onSeekBy = { delta ->
-                    val upper = player.duration.coerceAtLeast(0L)
-                    player.seekTo((player.currentPosition + delta).coerceIn(0L, upper))
+                    // 时长未知（直播 / 还没 prepare 完）时上界不能当 0，否则每次快进快退
+                    // 都会跳到第 0 秒。口径统一在 PlayerGestures.seekTarget 里。
+                    player.seekTo(
+                        PlayerGestures.seekTarget(player.currentPosition, delta, player.duration),
+                    )
                 },
                 onScrub = { fraction ->
                     scrubbing = true

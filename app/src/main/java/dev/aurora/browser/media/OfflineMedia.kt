@@ -109,6 +109,14 @@ object OfflineMedia {
         return CacheDataSource.Factory()
             .setCache(cache(context))
             .setUpstreamDataSourceFactory(upstream)
+            // **只读**：命中缓存就离线播，没命中就走网络、不往缓存里写。
+            //
+            // 为什么必须显式写这一句：`CacheDataSource.Factory` 默认是「边播边存」的
+            // （`setCacheWriteDataSinkFactory(null)` 才会把 `cacheIsReadOnly` 置真）。
+            // 而这份 cache 用的是 [NoOpCacheEvictor]——顺手存下来的分片永远不会被淘汰，
+            // 用户在线看多少视频，应用私有目录就占多少存储，只能靠清数据回收。
+            // 真要给在线播放留缓存，得另开一份带 LRU 淘汰的 cache，不能和下载共用。
+            .setCacheWriteDataSinkFactory(null)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
 

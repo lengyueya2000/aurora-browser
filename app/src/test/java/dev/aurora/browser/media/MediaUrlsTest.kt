@@ -46,4 +46,22 @@ class MediaUrlsTest {
         assertThat(MediaUrls.isHls("https://c.com/play?url=abc.m3u8&t=1")).isTrue()
         assertThat(MediaUrls.isHls("https://c.com/v/MASTER.M3U8")).isTrue()
     }
+
+    /**
+     * 下载分流用的是宽口径 [MediaUrls.isStream]。
+     *
+     * 拿窄口径（[MediaUrls.isPlaylist]）分流的话，嗅探回来的 `/m3u8/<hash>`、
+     * `/play?url=xxx.m3u8` 会被当成直链交给系统下载器——用户点完「下载」拿到一个
+     * 几 KB 的文本文件，视频一个字节都没有。
+     */
+    @Test fun theDownloadForkUsesTheWideYardstick() {
+        assertThat(MediaUrls.isStream("https://c.com/v/master.m3u8")).isTrue()
+        assertThat(MediaUrls.isStream("https://c.com/v/manifest.mpd")).isTrue()
+        assertThat(MediaUrls.isStream("https://c.com/m3u8/a54f4c74d9a560d6e86f17c28ddd24cd"))
+            .isTrue()
+        assertThat(MediaUrls.isStream("https://c.com/play?url=abc.m3u8&t=1")).isTrue()
+
+        assertThat(MediaUrls.isStream("https://c.com/v/movie.mp4")).isFalse()
+        assertThat(MediaUrls.isStream("https://c.com/v/seg-1.ts")).isFalse()
+    }
 }

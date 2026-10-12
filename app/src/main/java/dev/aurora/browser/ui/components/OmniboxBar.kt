@@ -142,12 +142,14 @@ fun OmniboxBar(
 }
 
 /**
- * URL → 展示用域名。解析失败（含手输的半截地址）时原样返回，
- * 这样用户至少能看到自己敲进去的东西，而不是空白。
+ * URL → 展示用域名。解析不出域名时退回「域名形状」的片段，
+ * 这样用户至少能看到自己敲进去的东西，而不是空白；也不会让一条长 URL 铺满一行。
  */
 fun hostOf(url: String?): String {
     if (url.isNullOrBlank()) return ""
-    return runCatching { java.net.URI(url).host }.getOrNull() ?: url
+    runCatching { java.net.URI(url).host }.getOrNull()?.let { return it }
+    // 手输的半截地址、`about:blank`、搜索词：去掉 scheme，只留第一段，别把整条 URL 抖出来。
+    return url.substringAfter("://").substringBefore('/').substringBefore('?').substringBefore('#')
 }
 
 /**

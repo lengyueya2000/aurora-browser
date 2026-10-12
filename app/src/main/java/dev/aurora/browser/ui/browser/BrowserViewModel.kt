@@ -185,6 +185,17 @@ class BrowserViewModel(
         _sslWarning.value = false
     }
 
+    /**
+     * 标题变化（`onReceivedTitle`）：只回写标题。
+     *
+     * 不写历史：加载过程中的标题变化不是一次访问，写进去会在历史里留下一串同地址、
+     * 不同标题的中间态（真正的历史由 [onPageFinished] 记）。
+     */
+    fun onTitle(tabId: String, title: String) {
+        if (title.isBlank()) return
+        tabs.update(tabId, title = title)
+    }
+
     // shouldInterceptRequest 在 WebView 的后台线程上回调，可能并发进来：
     // `_trackerCount.value += 1` 是读-改-写，两次并发会丢一次计数。
     fun onTrackerBlocked() { _trackerCount.update { it + 1 } }

@@ -51,8 +51,7 @@ internal object PlayerGestures {
     fun seekPreview(startMs: Long, dx: Float, width: Int, durationMs: Long): SeekPreview {
         if (width <= 0) return SeekPreview(startMs.coerceAtLeast(0L), 0L)
         val delta = (dx / width * SEEK_FULL_WIDTH_MS).toLong()
-        val upper = if (durationMs > 0L) durationMs else Long.MAX_VALUE
-        val target = (startMs + delta).coerceIn(0L, upper)
+        val target = seekTarget(startMs, delta, durationMs)
         // 起点本来就在末尾时，夹紧后的位移和名义位移不一致，显示的差值要跟着修正，
         // 否则会出现「显示 +30 秒但画面没动」。
         return SeekPreview(target, target - startMs)
@@ -73,11 +72,21 @@ internal object PlayerGestures {
         return (from - dy / height * maxVolume).roundToInt().coerceIn(0, maxVolume)
     }
 
+    /**
+     * 相对当前位置走 [deltaMs] 之后的落点。所有「按一下跳几秒」的入口都走这里。
+     *
+     * 时长未知时（直播、还没 prepare 完）**不能**把上界当成 0：`coerceIn(0, 0)` 会把
+     * 每一次快进/快退都变成「跳到第 0 秒」。这时上界放到 `Long.MAX_VALUE`，只夹下界。
+     */
+    fun seekTarget(positionMs: Long, deltaMs: Long, durationMs: Long): Long {
+        val upper = if (durationMs > 0L) durationMs else Long.MAX_VALUE
+        return (positionMs + deltaMs).coerceIn(0L, upper)
+    }
+
     /** 双击左半屏退 10 秒、右半屏进 10 秒。 */
     fun doubleTapSeekMs(startMs: Long, x: Float, width: Int, durationMs: Long): Long {
         val step = if (sideOf(x, width) == Side.LEFT) -DOUBLE_TAP_SEEK_MS else DOUBLE_TAP_SEEK_MS
-        val upper = if (durationMs > 0L) durationMs else Long.MAX_VALUE
-        return (startMs + step).coerceIn(0L, upper)
+        return seekTarget(startMs, step, durationMs)
     }
 
     /** 进度与时长：一小时以内用 `12:34`，超过用 `1:02:03`。 */

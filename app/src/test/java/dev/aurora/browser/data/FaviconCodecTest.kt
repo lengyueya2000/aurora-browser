@@ -85,6 +85,20 @@ class FaviconCodecTest {
         assertThat(FaviconCodec.pngFromIco(byteArrayOf(0, 0))).isNull()
     }
 
+    /**
+     * 目录项里的两个 32 位字段是**有符号**读进来的：偏移 + 长度相加会溢出成负数，
+     * 溢出后范围检查放行，`copyOfRange` 就抛异常。字节来自网络，不能假设它老实——
+     * 而这条路（`fetchBytes` → `normalizeIcon`）上没有别的兜底。
+     */
+    @Test fun anOverflowingLengthDoesNotThrow() {
+        val bytes = ico(16 to 16 to png())
+        writeU32(bytes, 6 + 8, 0x7FFFFFFF) // 负载长度
+        writeU32(bytes, 6 + 12, 1_000)     // 负载偏移：1000 + 0x7FFFFFFF 溢出
+
+        assertThat(FaviconCodec.pngFromIco(bytes)).isNull()
+        assertThat(FaviconCodec.normalizeIcon(bytes)).isNull()
+    }
+
     /** 不是 ICO 就原样交出去，能解不能解由 decode 判断。 */
     @Test fun nonIcoBytesPassThrough() {
         val bytes = png()

@@ -23,6 +23,16 @@ object MediaUrls {
      */
     fun isHls(url: String): Boolean = url.contains("m3u8", ignoreCase = true)
 
+    /**
+     * 是不是「要边下边播的流」——播放列表（HLS / DASH）。
+     *
+     * 下载分流只能用这个，**不能**用 [isPlaylist]：嗅探是按宽口径收地址的（见
+     * [MediaSniffer.kindOf]），`/m3u8/<hash>`、`/play?url=xxx.m3u8` 这类没扩展名的
+     * 播放列表也在其中。拿窄口径去分流，它们会被当成直链交给系统下载器，用户点完
+     * 「下载」拿到一个几 KB 的文本文件——正是 [MediaDownload] 注释里记着的那次漂移。
+     */
+    fun isStream(url: String): Boolean = isPlaylist(url) || isHls(url)
+
     /** 只看路径，忽略查询串与锚点——很多 CDN 把扩展名之外的参数塞在 `?` 后面。 */
     private fun pathOf(url: String): String =
         url.substringBefore('?').substringBefore('#').lowercase()
