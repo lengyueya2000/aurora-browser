@@ -10,6 +10,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +24,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,14 +45,24 @@ import dev.aurora.browser.ui.theme.AuroraTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 应用只有深色一套令牌，系统栏必须固定成「深底浅字」。
-        // 用默认的 auto 会在系统为浅色时把状态栏图标刷成深色，落在深色背景上等于隐形。
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-        )
+        // 主题偏好放在 Application 容器里：设置页写它、这里读它，必须是同一份 StateFlow，
+        // 否则切完主题要等下次启动才生效。
+        val store = (application as AuroraApp).store
         setContent {
-            AuroraTheme {
+            val mode by store.themeMode.collectAsState()
+            val dark = mode.isDark(isSystemInDarkTheme())
+
+            // 系统栏图标必须跟着令牌走，不能固定成一种：浅色令牌下状态栏是近白底，
+            // 沿用「深底浅字」会把图标刷成和背景一个色，等于隐形。
+            // 放在 LaunchedEffect 里重复调用——偏好一变就重新应用一次。
+            LaunchedEffect(dark) {
+                enableEdgeToEdge(
+                    statusBarStyle = systemBarStyle(dark),
+                    navigationBarStyle = systemBarStyle(dark),
+                )
+            }
+
+            AuroraTheme(dark = dark) {
                 CrashReportDialog()
                 // color = colors.bg：Surface 默认取 colorScheme.surface，
                 // 与规格的页面底色 bg 不是同一个值，必须显式指定。
@@ -61,6 +74,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+/** 透明系统栏 + 图标颜色：深色令牌配浅色图标，浅色令牌配深色图标。 */
+private fun systemBarStyle(dark: Boolean): SystemBarStyle =
+    if (dark) {
+        SystemBarStyle.dark(Color.TRANSPARENT)
+    } else {
+        // light(scrim, darkScrim)：两个都给透明，这里要的只是「图标用深色」这个标记。
+        SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+    }
 
 /**
  * 上次崩溃了就弹出来给用户看一眼，可以直接复制。

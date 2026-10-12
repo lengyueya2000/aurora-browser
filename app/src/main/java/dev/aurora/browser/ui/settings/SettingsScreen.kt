@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import dev.aurora.browser.domain.SearchEngine
+import dev.aurora.browser.domain.ThemeMode
 import dev.aurora.browser.ui.components.ScreenHeader
 import dev.aurora.browser.ui.components.SegmentedControl
 import dev.aurora.browser.ui.components.SettingRow
@@ -31,6 +32,8 @@ fun SettingsScreen(
     onBlockTrackersChange: (Boolean) -> Unit,
     desktopMode: Boolean,
     onDesktopModeChange: (Boolean) -> Unit,
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
     onOpenDownloads: () -> Unit,
     onBack: () -> Unit,
     /** 必填：由调用方传 `BuildConfig.VERSION_NAME`，不给默认值就不会和 versionName 漂移。 */
@@ -50,9 +53,16 @@ fun SettingsScreen(
         ) {
             SettingGroup("外观")
             SettingRow(
-                title = "深色模式",
-                subtitle = "Aurora 只提供深色主题，跟随系统字号缩放",
-                value = "已开启",
+                title = "主题",
+                subtitle = "浅色是「晨雾」，深色是 1.15 之前的界面",
+            )
+            SegmentedControl(
+                options = ThemeMode.entries.map { it to it.label },
+                selected = themeMode,
+                onSelect = onThemeModeChange,
+                modifier = Modifier
+                    .padding(horizontal = AuroraSpacing.l, vertical = AuroraSpacing.s)
+                    .semantics { contentDescription = "主题" },
             )
 
             SettingGroup("浏览")

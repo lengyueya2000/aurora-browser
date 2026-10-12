@@ -8,6 +8,7 @@ import dev.aurora.browser.domain.BackOutcome
 import dev.aurora.browser.domain.BackPressDispatcher
 import dev.aurora.browser.domain.SearchEngine
 import dev.aurora.browser.domain.TabRepository
+import dev.aurora.browser.domain.ThemeMode
 import dev.aurora.browser.domain.UrlResolver
 import dev.aurora.browser.domain.model.Bookmark
 import dev.aurora.browser.domain.model.BrowserTab
@@ -68,6 +69,7 @@ class BrowserViewModel(
     val searchEngine: StateFlow<SearchEngine> = store.searchEngine
     val blockTrackers: StateFlow<Boolean> = store.blockTrackers
     val desktopMode: StateFlow<Boolean> = store.desktopMode
+    val themeMode: StateFlow<ThemeMode> = store.themeMode
 
     fun addBookmark(title: String, url: String) = store.addBookmark(title, url)
     fun removeBookmark(url: String) = store.removeBookmark(url)
@@ -75,6 +77,7 @@ class BrowserViewModel(
     fun setSearchEngine(engine: SearchEngine) = store.setSearchEngine(engine)
     fun setBlockTrackers(enabled: Boolean) = store.setBlockTrackers(enabled)
     fun setDesktopMode(enabled: Boolean) = store.setDesktopMode(enabled)
+    fun setThemeMode(mode: ThemeMode) = store.setThemeMode(mode)
 
     /** 当前活动页是否已收藏。 */
     fun isBookmarked(url: String?): Boolean =

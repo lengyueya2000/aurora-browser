@@ -263,7 +263,9 @@ private fun DownloadRowItem(
                         .fillMaxWidth()
                         .height(3.dp)
                         .clip(RoundedCornerShape(AuroraRadius.full))
-                        .background(c.bgElevated),
+                        // 轨道用 surfaceHover 而不是 bgElevated：后者在浅色令牌里与卡片
+                        // 同为纯白，进度条会只剩填充那一截（原型里 .bar 用的也是这一档）。
+                        .background(c.surfaceHover),
                 ) {
                     Box(
                         modifier = Modifier

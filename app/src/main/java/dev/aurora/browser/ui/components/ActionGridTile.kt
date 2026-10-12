@@ -1,6 +1,7 @@
 package dev.aurora.browser.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,7 +43,10 @@ fun ActionGridTile(
         modifier = modifier
             .heightIn(min = 72.dp)
             .clip(RoundedCornerShape(AuroraRadius.m))
-            .background(c.bgElevated)
+            // surface 而不是 bgElevated：动作块铺在同样用 bgElevated 的菜单面板上，
+            // 底色相同等于没有底（深浅两套都是如此，原型里 .act 用的是 surface + 发丝线）。
+            .background(c.surface)
+            .border(1.dp, c.divider, RoundedCornerShape(AuroraRadius.m))
             .auroraClickable(enabled = enabled, onClick = onClick)
             .padding(vertical = AuroraSpacing.m, horizontal = AuroraSpacing.s)
             .semantics { contentDescription = label },

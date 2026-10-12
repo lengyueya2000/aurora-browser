@@ -39,13 +39,18 @@ fun <T> SegmentedControl(
     ) {
         options.forEach { (value, label) ->
             val isOn = value == selected
+            val pill = RoundedCornerShape(AuroraRadius.full)
             Box(
                 modifier = Modifier
                     // 48dp 而非紧凑的 36dp：每个分段都是独立可点目标，须满足
                     // 全局约束「最小触摸目标 48×48dp」。
                     .heightIn(min = AuroraSpacing.touchTarget)
-                    .clip(RoundedCornerShape(AuroraRadius.full))
+                    .clip(pill)
                     .background(if (isOn) c.surface else c.bgElevated)
+                    // 选中段要一圈描边，不能只靠底色：浅色令牌里 surface 与 bgElevated
+                    // 都是纯白（纸白卡片 + 纸白容器），底色一换就分不出选中的是哪一段。
+                    // 原型那边靠一层 shadow-1 拉开，这里的等价物是这条发丝线。
+                    .then(if (isOn) Modifier.border(1.dp, c.border, pill) else Modifier)
                     .semantics { this.selected = isOn }
                     .clickable(
                         role = Role.Tab,

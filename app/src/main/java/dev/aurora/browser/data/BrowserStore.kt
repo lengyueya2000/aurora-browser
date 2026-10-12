@@ -1,6 +1,7 @@
 package dev.aurora.browser.data
 
 import dev.aurora.browser.domain.SearchEngine
+import dev.aurora.browser.domain.ThemeMode
 import dev.aurora.browser.domain.model.Bookmark
 import dev.aurora.browser.domain.model.HistoryEntry
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,9 @@ interface BrowserStore {
     /** 请求桌面版网站：给 WebView 换一个桌面 UA。 */
     val desktopMode: StateFlow<Boolean>
 
+    /** 界面主题：浅色 / 深色 / 跟随系统。 */
+    val themeMode: StateFlow<ThemeMode>
+
     fun addBookmark(title: String, url: String)
     fun removeBookmark(url: String)
     fun recordVisit(title: String, url: String)
@@ -30,6 +34,7 @@ interface BrowserStore {
     fun setSearchEngine(engine: SearchEngine)
     fun setBlockTrackers(enabled: Boolean)
     fun setDesktopMode(enabled: Boolean)
+    fun setThemeMode(mode: ThemeMode)
 
     companion object {
         /** 历史上限：只保留最近这么多条，避免持久化文件无限增长。 */
@@ -44,6 +49,7 @@ class InMemoryBrowserStore(
     engine: SearchEngine = SearchEngine.Default,
     block: Boolean = true,
     desktop: Boolean = false,
+    theme: ThemeMode = ThemeMode.Default,
 ) : BrowserStore {
 
     private val _bookmarks = MutableStateFlow(bookmarks)
@@ -60,6 +66,9 @@ class InMemoryBrowserStore(
 
     private val _desktop = MutableStateFlow(desktop)
     override val desktopMode: StateFlow<Boolean> = _desktop.asStateFlow()
+
+    private val _theme = MutableStateFlow(theme)
+    override val themeMode: StateFlow<ThemeMode> = _theme.asStateFlow()
 
     override fun addBookmark(title: String, url: String) {
         if (url.isBlank()) return
@@ -84,6 +93,7 @@ class InMemoryBrowserStore(
     override fun setSearchEngine(engine: SearchEngine) { _engine.value = engine }
     override fun setBlockTrackers(enabled: Boolean) { _block.value = enabled }
     override fun setDesktopMode(enabled: Boolean) { _desktop.value = enabled }
+    override fun setThemeMode(mode: ThemeMode) { _theme.value = mode }
 
     private var clock: Long = 0
     private fun now(): Long = clock++

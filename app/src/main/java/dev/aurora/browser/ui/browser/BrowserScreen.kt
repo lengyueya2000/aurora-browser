@@ -151,6 +151,7 @@ fun BrowserScreen(
     val engine by vm.searchEngine.collectAsState()
     val blockTrackers by vm.blockTrackers.collectAsState()
     val desktopMode by vm.desktopMode.collectAsState()
+    val themeMode by vm.themeMode.collectAsState()
     val trackerCount by vm.trackerCount.collectAsState()
     val sslWarning by vm.sslWarning.collectAsState()
     val message by vm.message.collectAsState()
@@ -648,6 +649,8 @@ fun BrowserScreen(
                     onBlockTrackersChange = { vm.setBlockTrackers(it) },
                     desktopMode = desktopMode,
                     onDesktopModeChange = { vm.setDesktopMode(it) },
+                    themeMode = themeMode,
+                    onThemeModeChange = { vm.setThemeMode(it) },
                     onOpenDownloads = {
                         refreshDownloads()
                         vm.openSurface(BrowserSurface.Downloads)

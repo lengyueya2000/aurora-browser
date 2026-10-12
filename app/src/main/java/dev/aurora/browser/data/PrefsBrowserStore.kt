@@ -3,6 +3,7 @@ package dev.aurora.browser.data
 import android.content.Context
 import android.content.SharedPreferences
 import dev.aurora.browser.domain.SearchEngine
+import dev.aurora.browser.domain.ThemeMode
 import dev.aurora.browser.domain.model.Bookmark
 import dev.aurora.browser.domain.model.HistoryEntry
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +36,9 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
 
     private val _desktop = MutableStateFlow(prefs.readBoolean(KEY_DESKTOP, false))
     override val desktopMode: StateFlow<Boolean> = _desktop.asStateFlow()
+
+    private val _theme = MutableStateFlow(ThemeMode.fromName(prefs.readString(KEY_THEME)))
+    override val themeMode: StateFlow<ThemeMode> = _theme.asStateFlow()
 
     override fun addBookmark(title: String, url: String) {
         if (url.isBlank()) return
@@ -82,6 +86,11 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
     override fun setDesktopMode(enabled: Boolean) {
         _desktop.value = enabled
         prefs.edit().putBoolean(KEY_DESKTOP, enabled).apply()
+    }
+
+    override fun setThemeMode(mode: ThemeMode) {
+        _theme.value = mode
+        prefs.edit().putString(KEY_THEME, mode.name).apply()
     }
 
     private fun readBookmarks(): List<Bookmark> = readArray(KEY_BOOKMARKS).mapNotNull { o ->
@@ -141,5 +150,6 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
         const val KEY_ENGINE = "search_engine"
         const val KEY_BLOCK = "block_trackers"
         const val KEY_DESKTOP = "desktop_mode"
+        const val KEY_THEME = "theme_mode"
     }
 }

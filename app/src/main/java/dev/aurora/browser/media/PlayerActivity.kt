@@ -52,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -107,6 +108,7 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import dev.aurora.browser.AuroraApp
 import dev.aurora.browser.data.DownloadsRepository
 import dev.aurora.browser.ui.browser.DesktopMode
 import dev.aurora.browser.ui.cast.CastController
@@ -116,6 +118,7 @@ import dev.aurora.browser.ui.theme.Aurora
 import dev.aurora.browser.ui.theme.AuroraRadius
 import dev.aurora.browser.ui.theme.AuroraSpacing
 import dev.aurora.browser.ui.theme.AuroraTheme
+import dev.aurora.browser.ui.theme.OnVideoColors
 import kotlinx.coroutines.delay
 
 /**
@@ -324,7 +327,10 @@ class PlayerActivity : ComponentActivity() {
         exo.playWhenReady = true
 
         setContent {
-            AuroraTheme {
+            // 选集抽屉、片尾卡片这些「有自己不透明底」的面板跟着主题走（浅色主题下就是浅色的），
+            // 直接压在画面上的控制层走 OnVideoColors，两边互不影响。
+            val mode by (application as AuroraApp).store.themeMode.collectAsState()
+            AuroraTheme(mode = mode) {
                 PlayerScreen(
                     player = exo,
                     // 标题由选集状态算出来：切集之后要变成「剧名 · 第 2 集」，所以读的是
@@ -1046,7 +1052,9 @@ private fun PlayerScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Aurora.colors.bg),
+            // 视频之外那一圈底色固定深色：浅色主题下它若跟着变成纸白，
+            // 上下留白会亮得晃眼，与画面本身也不是一个整体。
+            .background(OnVideoColors.bg),
     ) {
         AndroidView(
             factory = { ctx ->
@@ -1095,7 +1103,7 @@ private fun PlayerScreen(
 
         if (buffering && !pip && switchingLabel == null) {
             CircularProgressIndicator(
-                color = Aurora.colors.brand,
+                color = OnVideoColors.brand,
                 modifier = Modifier
                     .align(Alignment.Center)
                     .size(44.dp),
@@ -1109,11 +1117,11 @@ private fun PlayerScreen(
                 modifier = Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                CircularProgressIndicator(color = Aurora.colors.brand, modifier = Modifier.size(44.dp))
+                CircularProgressIndicator(color = OnVideoColors.brand, modifier = Modifier.size(44.dp))
                 Spacer(Modifier.height(AuroraSpacing.m))
                 Text(
                     text = "正在获取$switchingLabel…",
-                    color = Aurora.colors.text,
+                    color = OnVideoColors.text,
                     fontSize = 13.sp,
                 )
             }
@@ -1247,7 +1255,8 @@ private fun PlayerScreen(
  */
 @Composable
 private fun DownloadStrip(status: DownloadStatus, modifier: Modifier = Modifier) {
-    val colors = Aurora.colors
+    // 压在画面上：用固定的深色那套，不跟主题翻（见 OnVideoColors）。
+    val colors = OnVideoColors
     Column(
         modifier = modifier
             .background(
@@ -1431,7 +1440,8 @@ private fun PlayerControls(
     onDownload: () -> Unit,
     onExit: () -> Unit,
 ) {
-    val colors = Aurora.colors
+    // 整层压在画面上（连同那层遮罩），配色固定深色，不跟主题翻。
+    val colors = OnVideoColors
 
     Box(
         Modifier
@@ -1713,7 +1723,8 @@ private fun ControlChip(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    val colors = Aurora.colors
+    // 胶囊只出现在控制层里，全部压在画面上。
+    val colors = OnVideoColors
     Text(
         text = label,
         color = when {
@@ -2089,7 +2100,7 @@ private fun PlayerPanelContent(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = AuroraSpacing.m, vertical = AuroraSpacing.s)
-            .background(Aurora.colors.glass, RoundedCornerShape(AuroraRadius.m))
+            .background(OnVideoColors.glass, RoundedCornerShape(AuroraRadius.m))
             .padding(AuroraSpacing.xs),
     ) {
         when (panel) {
@@ -2127,7 +2138,8 @@ private fun PlayerPanelContent(
 
 @Composable
 private fun PanelRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    val colors = Aurora.colors
+    // 面板本体是半透明的，压在画面上，所以行文字也用固定深色那套。
+    val colors = OnVideoColors
     Text(
         text = label,
         color = if (selected) colors.brand else colors.text,
@@ -2141,7 +2153,8 @@ private fun PanelRow(label: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun GestureHintOverlay(hint: GestureHint, modifier: Modifier = Modifier) {
-    val colors = Aurora.colors
+    // 手势提示浮在画面正中，同样固定深色。
+    val colors = OnVideoColors
     Column(
         modifier
             .background(colors.glass, RoundedCornerShape(AuroraRadius.s))

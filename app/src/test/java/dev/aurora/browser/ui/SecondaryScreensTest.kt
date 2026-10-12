@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performTextInput
 import com.google.common.truth.Truth.assertThat
 import dev.aurora.browser.data.DownloadItem
 import dev.aurora.browser.domain.SearchEngine
+import dev.aurora.browser.domain.ThemeMode
 import dev.aurora.browser.domain.model.Bookmark
 import dev.aurora.browser.domain.model.HistoryEntry
 import dev.aurora.browser.media.OfflineItem
@@ -51,6 +52,7 @@ class SecondaryScreensTest {
                     onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
                     desktopMode = false, onDesktopModeChange = {},
+                    themeMode = ThemeMode.LIGHT, onThemeModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
@@ -71,12 +73,39 @@ class SecondaryScreensTest {
                     onEngineChange = { picked = it },
                     blockTrackers = true, onBlockTrackersChange = {},
                     desktopMode = false, onDesktopModeChange = {},
+                    themeMode = ThemeMode.LIGHT, onThemeModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
         }
         compose.onNodeWithText("百度").performClick()
         assertThat(picked).isEqualTo(SearchEngine.BAIDU)
+    }
+
+    /**
+     * 外观那一组以前是一行假的「深色模式 / 已开启」——应用只有深色一套，写死一句说明。
+     * 现在真有三档可选，控件必须真的回调，不然又是个点不动的摆设。
+     */
+    @Test fun settingsThemePickerReportsTheMode() {
+        var picked: ThemeMode? = null
+        compose.setContent {
+            AuroraTheme {
+                SettingsScreen(
+                    engine = SearchEngine.BING, onEngineChange = {},
+                    blockTrackers = true, onBlockTrackersChange = {},
+                    desktopMode = false, onDesktopModeChange = {},
+                    themeMode = ThemeMode.LIGHT, onThemeModeChange = { picked = it },
+                    onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
+                )
+            }
+        }
+        compose.onNodeWithText("外观").assertExists()
+        compose.onNodeWithText("主题").assertExists()
+        compose.onNodeWithText("深色模式").assertDoesNotExist()
+        // 精确匹配："深色" 只命中分段控件那一段，不会命中副标题里那句
+        // 「浅色是「晨雾」，深色是 1.15 之前的界面」。
+        compose.onNodeWithText("深色").performClick()
+        assertThat(picked).isEqualTo(ThemeMode.DARK)
     }
 
     @Test fun trackerSwitchRowToggles() {
@@ -87,6 +116,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING, onEngineChange = {},
                     blockTrackers = false, onBlockTrackersChange = { block = it },
                     desktopMode = false, onDesktopModeChange = {},
+                    themeMode = ThemeMode.LIGHT, onThemeModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
@@ -106,6 +136,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING, onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
                     desktopMode = false, onDesktopModeChange = {},
+                    themeMode = ThemeMode.LIGHT, onThemeModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
@@ -122,6 +153,7 @@ class SecondaryScreensTest {
                     engine = SearchEngine.BING, onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
                     desktopMode = false, onDesktopModeChange = {},
+                    themeMode = ThemeMode.LIGHT, onThemeModeChange = {},
                     onOpenDownloads = { opened++ }, onBack = { back++ }, versionName = "9.9-test",
                 )
             }
@@ -578,6 +610,7 @@ class SecondaryScreensTest {
                     onEngineChange = {},
                     blockTrackers = true, onBlockTrackersChange = {},
                     desktopMode = false, onDesktopModeChange = {},
+                    themeMode = ThemeMode.LIGHT, onThemeModeChange = {},
                     onOpenDownloads = {}, onBack = {}, versionName = "9.9-test",
                 )
             }
