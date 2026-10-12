@@ -11,8 +11,14 @@ object UrlResolver {
     /** 带 scheme 的完整地址：http://…、https://…、ftp://… */
     private val WITH_SCHEME = Regex("^[a-zA-Z][a-zA-Z0-9+.\\-]*://\\S*$")
 
-    /** 无 authority 的 scheme：about:blank、data:…、file:…、javascript:… */
-    private val SCHEME_ONLY = Regex("^(about|data|file|blob|javascript|mailto|tel):\\S*$", RegexOption.IGNORE_CASE)
+    /**
+     * 无 authority 的 scheme：about:blank、file:…、blob:…、mailto:…、tel:…。
+     *
+     * **刻意不含 `javascript:` 与 `data:`**：这两个地址一路走到 `WebView.loadUrl` 会在当前
+     * 页面上执行脚本 / 载入一段能自带脚本的 HTML。地址栏里的内容可能是粘贴来的（用户以为
+     * 是个链接），放行就等于开了一条 self-XSS 与钓鱼的路子。主流浏览器同样把它们当搜索词。
+     */
+    private val SCHEME_ONLY = Regex("^(about|file|blob|mailto|tel):\\S*$", RegexOption.IGNORE_CASE)
 
     /** 形如 example.com、a.b.co.uk:8080/path?q=1 —— 顶级域至少两位字母。 */
     private val HOST_LIKE = Regex(

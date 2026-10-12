@@ -56,6 +56,17 @@ class MediaSnifferTest {
             .isEqualTo(MediaSniffer.Kind.PLAYLIST)
     }
 
+    /**
+     * `.mpd` 藏在查询串里也要收——和 `MediaUrls.isStream` 是同一把尺子。
+     *
+     * 口径漂移过一次：嗅探收进来了，下载分流却判成直链，交给系统下载器只存下一个清单文本。
+     */
+    @Test fun dashInQueryStringIsStillAPlaylist() {
+        val url = "https://c.com/play?url=/x/y.mpd&t=1"
+        assertThat(MediaSniffer.kindOf(url)).isEqualTo(MediaSniffer.Kind.PLAYLIST)
+        assertThat(MediaUrls.isStream(url)).isTrue()
+    }
+
     /** 查询串里的扩展名不能当成路径扩展名。 */
     @Test fun extensionComesFromThePathOnly() {
         assertThat(MediaSniffer.extensionOf("https://c.com/a/v.mp4?sig=x.ts")).isEqualTo("mp4")

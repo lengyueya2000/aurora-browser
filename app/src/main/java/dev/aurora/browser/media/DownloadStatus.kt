@@ -30,6 +30,8 @@ fun fileDownloadStatus(item: DownloadItem): DownloadStatus = DownloadStatus(
             "已下载 · " + DownloadsRepository.formatSize(
                 item.totalBytes.takeIf { it > 0 } ?: item.bytesDownloaded,
             )
+        // 系统自己会把下载挂起（等网络、等重试）。这时还说「正在下载」是骗人的。
+        item.isPaused -> "已暂停 · " + DownloadsRepository.formatSize(item.bytesDownloaded)
         item.isRunning ->
             "正在下载 · " + DownloadsRepository.formatProgress(
                 downloaded = item.bytesDownloaded,
@@ -41,7 +43,8 @@ fun fileDownloadStatus(item: DownloadItem): DownloadStatus = DownloadStatus(
         else -> "下载失败"
     },
     progress = if (item.isRunning && item.totalBytes > 0) item.progress else null,
-    running = item.isRunning,
+    // 挂起中不算「亮色进行中」，但那一行要留着（`isRunning` 把 PAUSED 也算在内）。
+    running = item.isActive,
 )
 
 /**
@@ -51,17 +54,23 @@ fun fileDownloadStatus(item: DownloadItem): DownloadStatus = DownloadStatus(
  */
 fun offlineDownloadStatus(item: OfflineItem): DownloadStatus = DownloadStatus(
     label = when {
-        item.isCompleted -> "已离线缓存 · ${DownloadsRepository.formatSize(item.bytes)}"
+        // 字节数为 0 的「已完成」是「之前就缓存过、Media3 复用了同一份缓存」，不是失败。
+        item.isCompleted ->
+            if (item.bytes > 0) "已离线缓存 · ${DownloadsRepository.formatSize(item.bytes)}"
+            else "已离线缓存"
         item.isFailed -> "离线缓存失败"
+        // 用户从下载页按了暂停，回到播放器还看到「正在离线缓存」就说不通了。
+        item.isPaused -> "已暂停 · " + DownloadsRepository.formatSize(item.bytes)
         else -> "正在离线缓存 · " + DownloadsRepository.formatProgress(
             downloaded = item.bytes,
             total = item.totalBytes,
             percent = item.percent,
             speed = item.speed,
             approxTotal = true,
-        )
+        ) + DownloadsRepository.formatSpeedNote(item.speed)
     },
     // 分片是一段一段完成的，比例条按分片数走；一个分片都没下完时不画。
     progress = if (item.isRunning && item.percent > 0f) item.progress else null,
-    running = item.isRunning,
+    // 暂停了就不再是「亮色进行中」，但那一行要留着（`isRunning` 把 STOPPED 也算在内）。
+    running = item.isActive,
 )

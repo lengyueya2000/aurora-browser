@@ -64,4 +64,21 @@ class MediaUrlsTest {
         assertThat(MediaUrls.isStream("https://c.com/v/movie.mp4")).isFalse()
         assertThat(MediaUrls.isStream("https://c.com/v/seg-1.ts")).isFalse()
     }
+
+    /**
+     * DASH 藏在查询串里也要认出来——和 HLS 同理，口径必须和 `MediaSniffer` 一致。
+     *
+     * 漏了这一条：`/play?url=xxx.mpd` 被 `isStream` 判成直链、交给系统下载器，用户拿到
+     * 一个几 KB 的清单文本；而嗅探那把尺子（`kindOf`）本来是认它的——两处口径漂移。
+     */
+    @Test fun dashWithoutTheExtensionStillCountsAsStream() {
+        assertThat(MediaUrls.isDash("https://c.com/play?url=abc.mpd&t=1")).isTrue()
+        assertThat(MediaUrls.isDash("https://c.com/v/manifest.mpd")).isTrue()
+        assertThat(MediaUrls.isDash("https://c.com/v/master.m3u8")).isFalse()
+
+        assertThat(MediaUrls.isStream("https://c.com/play?url=abc.mpd&t=1")).isTrue()
+        // 与嗅探的分类保持一致。
+        assertThat(MediaSniffer.kindOf("https://c.com/play?url=abc.mpd&t=1"))
+            .isEqualTo(MediaSniffer.Kind.PLAYLIST)
+    }
 }

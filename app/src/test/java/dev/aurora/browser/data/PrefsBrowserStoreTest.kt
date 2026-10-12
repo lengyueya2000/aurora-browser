@@ -109,6 +109,22 @@ class PrefsBrowserStoreTest {
         assertThat(store.bookmarks.value.map { it.url }).containsExactly("https://a.com")
     }
 
+    /**
+     * 数组里混进一个坏元素，只丢那一条，其余照常读出来。
+     *
+     * 以前用 `getJSONObject`：碰到一个非对象就抛，`runCatching` 把整张列表兜成空——
+     * 一条坏数据等于把全部书签清空。现在逐元素 `optJSONObject`，坏的跳过、好的留下。
+     */
+    @Test fun oneMalformedElementDoesNotDiscardTheWholeList() {
+        prefs().edit().putString(
+            "bookmarks",
+            """[{"title":"A","url":"https://a.com"}, 42, {"title":"B","url":"https://b.com"}]""",
+        ).commit()
+        val store = PrefsBrowserStore(context)
+        assertThat(store.bookmarks.value.map { it.url })
+            .containsExactly("https://a.com", "https://b.com").inOrder()
+    }
+
     /** 未知的搜索引擎名（降级安装、手工改过）回落到默认引擎。 */
     @Test fun unknownSearchEngineFallsBackToDefault() {
         prefs().edit().putString("search_engine", "YAHOO").commit()

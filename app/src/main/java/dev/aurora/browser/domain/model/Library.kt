@@ -7,7 +7,7 @@ data class Bookmark(
     val createdAt: Long,
 )
 
-/** 一条浏览历史。`url` 可以重复（同一页多次访问会有多条）。 */
+/** 一条浏览历史。`url` 唯一：同一地址重复访问只保留最新一条并移到最前（见 `PrefsBrowserStore.recordVisit`）。 */
 data class HistoryEntry(
     val title: String,
     val url: String,

@@ -133,4 +133,19 @@ class MediaOverlayTest {
         bridge.onMediaAction("play", "blob:https://a.com/x", "123")
         assertThat(extra).isEqualTo("123")
     }
+
+    /**
+     * 参数声明成可空：页面里任意脚本（含跨域 iframe）都能直接传 `null` 进来。
+     *
+     * 声明成非空的话，`null` 会先撞在 Kotlin 生成的非空检查上抛异常（跑在 WebView 的 JS
+     * 线程上），而不是被这里安静地挡掉。传 null 的动作/地址一律丢弃，extra 缺省成空串。
+     */
+    @Test fun bridgeToleratesNullArguments() {
+        val seen = mutableListOf<String>()
+        val bridge = MediaBridge { action, url, extra -> seen += "$action $url $extra" }
+        bridge.onMediaAction(null, "https://a.com/v.mp4", null)
+        bridge.onMediaAction("play", null, null)
+        bridge.onMediaAction("play", "https://a.com/v.mp4", null)
+        assertThat(seen).containsExactly("play https://a.com/v.mp4 ")
+    }
 }

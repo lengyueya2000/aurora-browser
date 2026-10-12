@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
@@ -139,7 +140,20 @@ class PlayerActivity : ComponentActivity() {
     private var trackSelector: DefaultTrackSelector? = null
     private var prefs: PlaybackPreferences? = null
     private var savedCutoutMode: Int? = null
+
+    /**
+     * 当前在播的真实地址。切集时会被改写（见 [onEpisodeStreamReady]），因此带一个 setter：
+     * 地址一换就把 [sawDownloadRunning] 复位，免得上一集「看到在下载」的状态跟到下一集，
+     * 让新一集挂上一行本不该出现的下载状态。
+     *
+     * `@Volatile`：下载轮询在后台线程读它（见 [startDownloadTicker]），写入在主线程。
+     */
+    @Volatile
     private var mediaUrl: String = ""
+        set(value) {
+            if (value != field) sawDownloadRunning = false
+            field = value
+        }
     private var mediaTitle: String = ""
     private var mediaReferer: String? = null
 
@@ -208,13 +222,29 @@ class PlayerActivity : ComponentActivity() {
      *
      * 用来决定「下完之后那一行还留不留」：自己点的下载，下完了应该看到「已离线缓存 · 899 MB」
      * 收个尾；而一进来就已经下好的那一集（本来就是离线播的），再挂一行状态纯属多余。
+     *
+     * 后台线程（下载轮询）会读写它，所以 `@Volatile`。
      */
+    @Volatile
     private var sawDownloadRunning = false
 
     /** 当前是不是「请求桌面版网站」。切集时嗅探窗口要用同一个 UA，否则站点给另一套页面。 */
     private var desktopMode = false
 
     private val main = Handler(Looper.getMainLooper())
+
+    /**
+     * 下载状态查询用的单线程池。
+     *
+     * 查询要读系统 `DownloadManager`（`ContentResolver`）与 Media3 的下载索引（数据库），
+     * 都是跨进程/落盘的开销，不能放在主线程上每 700ms 跑一次（见 [startDownloadTicker]）。
+     * 单线程保证同一时刻只有一次查询在飞，也不会乱序覆盖。
+     */
+    private val downloadQuery = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    /** 销毁后别再往主线程回投状态，免得碰已经拆掉的状态。 */
+    @Volatile
+    private var destroyed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -259,6 +289,16 @@ class PlayerActivity : ComponentActivity() {
             // 而不是直接报错退出。这是「有些视频播不了」最常见的成因。
             .setRenderersFactory(DefaultRenderersFactory(this).setEnableDecoderFallback(true))
             .setTrackSelector(selector)
+            // 音频焦点：Media3 只有在显式设了 `handleAudioFocus = true` 时才会去申请焦点。
+            // 不设的话，来电、别的应用起播都不会让本播放器暂停或 duck，拔耳机也没有回调——
+            // 用户听到的就是两路声音叠在一起。用法/内容类型声明成媒体，才能被系统正确路由。
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
             // 默认缓冲在弱网下太浅，一卡就重新缓冲。放宽到 20 秒起播、60 秒上限，
             // 并把「起播前最少缓冲」抬到 2.5 秒——起播慢一点，换卡顿少很多。
             .setLoadControl(
@@ -680,7 +720,14 @@ class PlayerActivity : ComponentActivity() {
         stopDownloadTicker()
         val ticker = object : Runnable {
             override fun run() {
-                downloadStatus.value = readDownloadStatus()
+                // 查询读系统下载器与 Media3 索引，是跨进程/落盘的活，丢给后台单线程池；
+                // 结果再回主线程写状态。放在主线程上每 700ms 跑一次会拖出卡顿。
+                runCatching {
+                    downloadQuery.execute {
+                        val status = readDownloadStatus()
+                        if (!destroyed) main.post { if (!destroyed) downloadStatus.value = status }
+                    }
+                }
                 main.postDelayed(this, DOWNLOAD_POLL_MS)
             }
         }
@@ -723,11 +770,14 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        destroyed = true
         rememberPosition()
         // 切集用的隐藏 WebView 必须显式销毁：一个二三十 MB，跟着 Activity 一起走。
         sniffer?.destroy()
         sniffer = null
         cancelEndCard()
+        stopDownloadTicker()
+        downloadQuery.shutdownNow()
         player?.release()
         player = null
         ImmersiveMode.exit(this, savedCutoutMode)
@@ -735,15 +785,26 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun rememberPosition() {
+        // 无痕来源不落盘：与「无痕不记历史」「无痕不记已看」同一口径。否则无痕看过的
+        // 流地址、标题、来源页都会被写进续播记录，主页「继续观看」还会把它显示出来。
+        if (incognito) return
         val exo = player ?: return
         // 标题与来源页一起存：主页的「继续观看」要显示是哪一集，重开时还要把 Referer
         // 交回来（见 RefererFallbackDataSource）。标题带上集号，一季里才分得清哪条是哪集。
+        //
+        // 选集列表也要一起存。它本来只活在这次播放的 Intent 里，从「继续观看」点回来时
+        // 没人能再给一份，左下角那对「上一集 / 下一集」就会整组消失——看起来像功能被删了。
+        // 存的是当前这一份（可能已经被切集改过下标），所以下标要另外记：`current` 记的是
+        // 页面上的那一集，切集之后不再等于正在播的这集。
+        val play = episodePlay.value
         prefs?.remember(
             url = mediaUrl,
             positionMs = exo.currentPosition,
             durationMs = exo.duration,
             title = displayTitle(),
             referer = mediaReferer,
+            episodes = play.list?.let(EpisodeCodec::toJson),
+            episodeIndex = play.index,
         )
     }
 

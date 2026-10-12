@@ -40,6 +40,13 @@ data class DownloadItem(
         status == DownloadManager.STATUS_PENDING || status == DownloadManager.STATUS_PAUSED
     val isSuccess: Boolean get() = status == DownloadManager.STATUS_SUCCESSFUL
 
+    /** 正在下（可以被暂停）。 */
+    val isActive: Boolean
+        get() = status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING
+
+    /** 用户按了暂停（可以被继续）。 */
+    val isPaused: Boolean get() = status == DownloadManager.STATUS_PAUSED
+
     /** 0f..1f；总长度未知时返回 0。 */
     val progress: Float
         get() = if (totalBytes > 0) (bytesDownloaded.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
@@ -133,6 +140,11 @@ class DownloadsRepository(private val context: Context) {
         runCatching { manager?.remove(id) }
     }
 
+    // 这里**没有** pause/resume：系统 `DownloadManager` 的 `pauseDownload`/`resumeDownload`
+    // 是 @hide 的（公开 API 里只有 enqueue/query/remove/…），走反射会被 Android 9+ 的隐藏
+    // API 限制挡掉。直链下载的暂停只能由系统通知栏那条进度通知来做；应用内的暂停/继续只给
+    // Media3 那条离线缓存的路（见 OfflineMedia.pause/resume）。
+
     /** 已下载文件的 content:// 地址，可直接交给 ACTION_VIEW。 */
     fun contentUri(id: Long): Uri? = runCatching { manager?.getUriForDownloadedFile(id) }.getOrNull()
 
@@ -149,9 +161,9 @@ class DownloadsRepository(private val context: Context) {
          * 「已下载 / 总大小 · 速度」。
          *
          * 总大小和速度都可能是「还不知道」：HLS 的总长度要下完才知道，这里是从已完成比例
-         * 反推的，所以带个「约」；速度要两次采样才算得出来。不知道的那段整段省掉——写
-         * 「0 B/s」看起来像卡住了，其实只是还没测出来。总大小还估不出来时改报百分比，
-         * 否则看不出还剩多少。
+         * 反推的，所以带个「约」；速度要两次采样才算得出来。速度还不知道时这一段省掉——写
+         * 「0 B/s」看起来像卡住了，其实只是还没测出来（离线缓存那条路另用 [formatSpeedNote]
+         * 说明「测速中」）。总大小还估不出来时改报百分比，否则看不出还剩多少。
          *
          * @param approxTotal 总大小是不是反推出来的（HLS 是，直链不是）。
          */
@@ -171,6 +183,19 @@ class DownloadsRepository(private val context: Context) {
             }
             return if (speed > 0) "$size · ${formatSize(speed)}/s" else size
         }
+
+        /**
+         * 离线缓存那一行的速度段（接在 [formatProgress] 后面）。
+         *
+         * **0 不等于「一点没动」**：Media3 每 5 秒才把「已下载字节」写进索引一次
+         * （`DownloadManager` 的 `UPDATE_PROGRESS_INTERVAL_MS`），所以刚打开下载页的那几秒
+         * 必然还没有第二个样本，速度只可能是 0。这种时候写「测速中…」而不是把这一段整个
+         * 省掉——省掉的话用户看到的是一个时有时无的速度字段，像是功能坏了。
+         *
+         * 直链那条路不用它：系统下载器的字节是连续更新的，那里 0 是真的没在动。
+         */
+        fun formatSpeedNote(speed: Long): String =
+            if (speed > 0) "" else " · 测速中…"
 
         /** 人类可读的体积，用于列表展示。 */
         fun formatSize(bytes: Long): String = when {

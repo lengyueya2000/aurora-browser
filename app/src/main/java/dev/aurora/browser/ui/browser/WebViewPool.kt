@@ -659,6 +659,10 @@ class WebViewPool(
                     // 不该在用户没点任何东西的情况下拉起外部应用——那是「打开网页就被拉走」
                     // 的一条路子。拦掉它，页面本身的展示不受影响。
                     if (!request.isForMainFrame) return true
+                    // 主框架这一半同样要有手势：页面自己执行 `location.href='weixin://…'`
+                    // 是没有用户手势的（`hasGesture()` 为 false），放行等于打开一个页面就
+                    // 被拉走。只有用户真点了链接（`tel:`/`mailto:`/`intent:` 这些）才交系统。
+                    if (!request.hasGesture()) return true
                     onExternalUrl(tabId, request.url.toString())
                     return true
                 }

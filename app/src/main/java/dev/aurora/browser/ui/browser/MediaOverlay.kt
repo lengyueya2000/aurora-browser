@@ -185,7 +185,10 @@ object MediaAction {
  */
 class MediaBridge(private val onAction: (action: String, url: String, extra: String) -> Unit) {
     @JavascriptInterface
-    fun onMediaAction(action: String, url: String, extra: String) {
+    fun onMediaAction(action: String?, url: String?, extra: String?) {
+        // 参数声明成可空：页面里任意脚本（含跨域 iframe）都能直接传 `null` 进来，
+        // 声明成非空的话会先撞在 Kotlin 生成的非空检查上抛异常，而不是被这里挡掉。
+        if (action == null || url == null) return
         if (!MediaAction.isValid(action, url)) return
         onAction(action, url, extra.orEmpty())
     }

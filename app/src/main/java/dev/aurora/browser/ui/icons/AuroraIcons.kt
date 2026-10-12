@@ -42,6 +42,8 @@ object AuroraIcons {
     @DrawableRes val Sparkle = R.drawable.ic_aurora_sparkle
     @DrawableRes val Refresh = R.drawable.ic_aurora_refresh
     @DrawableRes val Clipboard = R.drawable.ic_aurora_clipboard
+    @DrawableRes val Play = R.drawable.ic_aurora_play
+    @DrawableRes val Pause = R.drawable.ic_aurora_pause
 
     private val byName = mapOf(
         "arrow-left" to Back, "arrow-right" to Forward, "house-simple" to Home,
@@ -55,6 +57,7 @@ object AuroraIcons {
         "trash-simple" to Trash, "clock" to Clock, "desktop" to Desktop,
         "translate" to Translate, "image" to Image, "sparkle" to Sparkle,
         "arrow-clockwise" to Refresh, "clipboard-text" to Clipboard,
+        "play" to Play, "pause" to Pause,
     )
 
     /**

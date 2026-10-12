@@ -30,6 +30,8 @@ class AuroraIconsTest {
     @Test fun essentialIconsAreStillRegistered() {
         assertThat(AuroraIcons.names).containsAtLeast(
             "arrow-left", "magnifying-glass", "star", "eye-slash", "gear-six",
+            // 下载页那对：已完成行是播放键，下载中那行是暂停键。
+            "play", "pause",
         )
     }
 

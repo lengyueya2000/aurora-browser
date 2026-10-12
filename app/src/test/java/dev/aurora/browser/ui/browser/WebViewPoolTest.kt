@@ -42,12 +42,15 @@ class WebViewPoolTest {
     private fun newDesktopPool(f: CountingFactory, desktop: () -> Boolean) =
         WebViewPool(context, f.factory, desktop)
 
-    private class FakeRequest(private val raw: String, private val mainFrame: Boolean = true) :
-        WebResourceRequest {
+    private class FakeRequest(
+        private val raw: String,
+        private val mainFrame: Boolean = true,
+        private val gesture: Boolean = true,
+    ) : WebResourceRequest {
         override fun getUrl(): Uri = Uri.parse(raw)
         override fun isForMainFrame(): Boolean = mainFrame
         override fun isRedirect(): Boolean = false
-        override fun hasGesture(): Boolean = false
+        override fun hasGesture(): Boolean = gesture
         override fun getMethod(): String = "GET"
         override fun getRequestHeaders(): MutableMap<String, String> = mutableMapOf()
     }
@@ -127,7 +130,7 @@ class WebViewPoolTest {
         assertThat(seen!!.second).isEqualTo(web.title.orEmpty())
     }
 
-    /** 页面里的 tel:/mailto:/intent: 链接必须交给系统，否则点了没反应。 */
+    /** 页面里的 tel:/mailto:/intent: 链接（用户点的那一下）必须交给系统，否则点了没反应。 */
     @Test fun externalSchemesLeaveTheWebView() {
         val f = CountingFactory()
         val pool = newPool(f)
@@ -136,12 +139,38 @@ class WebViewPoolTest {
         pool.onExternalUrl = { _, url -> external = url }
         val client = shadowOf(web).webViewClient
 
-        assertThat(client.shouldOverrideUrlLoading(web, FakeRequest("tel:10086"))).isTrue()
+        assertThat(client.shouldOverrideUrlLoading(web, FakeRequest("tel:10086", gesture = true)))
+            .isTrue()
         assertThat(external).isEqualTo("tel:10086")
 
         external = null
-        assertThat(client.shouldOverrideUrlLoading(web, FakeRequest("weixin://dl/business"))).isTrue()
+        assertThat(
+            client.shouldOverrideUrlLoading(web, FakeRequest("weixin://dl/business", gesture = true)),
+        ).isTrue()
         assertThat(external).isEqualTo("weixin://dl/business")
+    }
+
+    /**
+     * 主框架里**没有用户手势**的自定义 scheme 跳转不交给系统。
+     *
+     * 页面自己执行 `location.href='weixin://…'` 时 `hasGesture()` 是 false——放行的话，
+     * 打开一个页面就会被拉走。只有用户真点了链接才交系统（见上一条用例）。
+     */
+    @Test fun mainFrameSchemeWithoutGestureIsBlocked() {
+        val f = CountingFactory()
+        val pool = newPool(f)
+        val web = pool.get("a", false)
+        var external: String? = null
+        pool.onExternalUrl = { _, url -> external = url }
+        val client = shadowOf(web).webViewClient
+
+        assertThat(
+            client.shouldOverrideUrlLoading(
+                web,
+                FakeRequest("weixin://dl/business", gesture = false),
+            ),
+        ).isTrue()
+        assertThat(external).isNull()
     }
 
     @Test fun httpAndHttpsStayInsideTheWebView() {

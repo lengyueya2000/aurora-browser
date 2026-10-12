@@ -98,8 +98,9 @@ object MediaSniffer {
             ext in FILE_EXTENSIONS -> Kind.FILE
             ext in SEGMENT_EXTENSIONS -> null
             // 有些站点把播放列表藏在查询串里（`/play?url=xxx.m3u8`），路径上没有扩展名。
-            url.contains("m3u8", ignoreCase = true) -> Kind.PLAYLIST
-            url.contains(".mpd", ignoreCase = true) -> Kind.PLAYLIST
+            // 走 MediaUrls 同一把尺子，免得两处口径漂移——真漂移过一次：嗅探收进来的
+            // `/play?url=xxx.mpd` 被判成直链、交给系统下载器，用户拿到一个几 KB 的清单文本。
+            MediaUrls.isStream(url) -> Kind.PLAYLIST
             else -> null
         }
     }

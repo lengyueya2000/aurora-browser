@@ -55,6 +55,14 @@ object OfflineMedia {
 
     private const val TITLE_PREFS = "aurora_offline_titles"
 
+    /**
+     * 「用户手动暂停」用的 stop reason。
+     *
+     * 取一个大于 0 的自定义值：Media3 只关心 reason 是不是 `NONE`，具体数值它不解释
+     * （`STOP_REASON_*` 那几个常量是官方给已知原因占的号，自己排一个别撞上就行）。
+     */
+    private const val STOP_REASON_USER = 1_000
+
     private var cacheInstance: SimpleCache? = null
     private var databaseInstance: StandaloneDatabaseProvider? = null
     private var managerInstance: DownloadManager? = null
@@ -96,6 +104,18 @@ object OfflineMedia {
             NoOpCacheEvictor(),
             database(context),
         ).also { cacheInstance = it }
+
+    /**
+     * 离线缓存实际占用的字节数。
+     *
+     * 只统计**缓存里真实落盘的分片**，不是「所有下载的 contentLength 之和」——删除一条
+     * 下载到底有没有把字节还回来，只有这个数说了算（`DownloadManager.removeDownload`
+     * 会连同缓存里的分片一起删）。界面把它显示出来，用户就能自己看见删完变小了。
+     *
+     * 播放是只读的（见 [playbackDataSource] 的 `setCacheWriteDataSinkFactory(null)`），
+     * 在线看视频不会往这里写，所以这个数就是离线缓存自己的体积。
+     */
+    fun cacheBytes(context: Context): Long = runCatching { cache(context).cacheSpace }.getOrDefault(0L)
 
     @Synchronized
     private fun database(context: Context): StandaloneDatabaseProvider =
@@ -159,8 +179,10 @@ object OfflineMedia {
      * 长时间任务，必须有前台服务撑着，否则用户切走应用就被系统连人带任务一起收走。
      *
      * @param referer 页面地址，有的 CDN 不给 Referer 就不放行（详见 [pendingReferer]）。
+     * @return 是否真的交给了下载服务。启动前台服务失败时返回 `false`，让调用方如实提示，
+     *   而不是不管成没成都说「已开始」。
      */
-    fun enqueue(context: Context, url: String, title: String, referer: String? = null) {
+    fun enqueue(context: Context, url: String, title: String, referer: String? = null): Boolean {
         rememberTitle(context, url, title)
         if (!referer.isNullOrBlank()) pendingReferer = referer
         val request = DownloadRequest.Builder(url, android.net.Uri.parse(url))
@@ -177,14 +199,14 @@ object OfflineMedia {
                 },
             )
             .build()
-        runCatching {
+        return runCatching {
             DownloadService.sendAddDownload(
                 context,
                 AuroraDownloadService::class.java,
                 request,
                 /* foreground = */ true,
             )
-        }
+        }.isSuccess
     }
 
     /** 当前所有离线下载（含进行中与已完成）。 */
@@ -229,6 +251,42 @@ object OfflineMedia {
                 context,
                 AuroraDownloadService::class.java,
                 url,
+                /* foreground = */ false,
+            )
+        }
+    }
+
+    /**
+     * 暂停单条离线缓存。
+     *
+     * Media3 1.4.1 的 `DownloadService` **没有**「按某条下载暂停」的接口——只有
+     * `sendPauseDownloads`（暂停全部）和 `sendSetStopReason`。所以单条暂停就是给它设一个
+     * 自定义的 stop reason：`DownloadManager` 见到非 NONE 的 reason 会把这条停下，
+     * 已下好的分片留在缓存里，继续时接着下（不是从头再来）。
+     *
+     * 与 [remove] 一样走 `DownloadService`：直接改 `DownloadManager` 会在没有前台服务的
+     * 时候被系统连任务一起收走。
+     */
+    fun pause(context: Context, url: String) {
+        runCatching {
+            DownloadService.sendSetStopReason(
+                context,
+                AuroraDownloadService::class.java,
+                url,
+                STOP_REASON_USER,
+                /* foreground = */ false,
+            )
+        }
+    }
+
+    /** 继续：把 stop reason 清回 NONE，`DownloadManager` 会重新排队这条，从断点接着下。 */
+    fun resume(context: Context, url: String) {
+        runCatching {
+            DownloadService.sendSetStopReason(
+                context,
+                AuroraDownloadService::class.java,
+                url,
+                Download.STOP_REASON_NONE,
                 /* foreground = */ false,
             )
         }
@@ -282,6 +340,24 @@ data class OfflineItem(
     val isFailed: Boolean get() = state == State.FAILED
     val isRunning: Boolean
         get() = state == State.QUEUED || state == State.DOWNLOADING || state == State.STOPPED
+
+    /** 正在下（可以被暂停）。 */
+    val isActive: Boolean get() = state == State.QUEUED || state == State.DOWNLOADING
+
+    /**
+     * 用户按了暂停（可以被继续）。
+     *
+     * Media3 没有单独的「暂停」状态：`pauseDownload` 之后状态就是 [State.STOPPED]，
+     * 与「还没开始」共用一个值。界面上把 STOPPED 一律当「已暂停」展示——因为入队之后
+     * 会立刻变 QUEUED，能停在 STOPPED 的只可能是被暂停或曾经失败过。
+     */
+    val isPaused: Boolean get() = state == State.STOPPED
+
+    /**
+     * 能不能现在就看。**没下完也能看**（边下边看）：播放器读的是同一份 `SimpleCache`，
+     * 已经落盘的分片直接命中、没下到的分片当场从网络补，所以下到一半点开就能放。
+     */
+    val isPlayable: Boolean get() = !isFailed
 
     /** 0f..1f；未知进度时返回 0。 */
     val progress: Float get() = percent.coerceIn(0f, 100f) / 100f

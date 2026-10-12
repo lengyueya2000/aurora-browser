@@ -23,6 +23,24 @@ class UrlResolverTest {
         assertThat(UrlResolver.resolve("tel:10086")).isEqualTo("tel:10086")
     }
 
+    /**
+     * `javascript:` / `data:` **不能**原样返回。
+     *
+     * 它们一路走到 `WebView.loadUrl` 会在当前页面上执行脚本 / 载入一段能自带脚本的 HTML。
+     * 地址栏里的内容可能是粘贴来的（用户以为是个链接），放行就是一条 self-XSS 与钓鱼的路子。
+     * 当搜索词处理既安全，也是主流浏览器的做法。
+     */
+    @Test fun scriptAndDataSchemesAreNotLoadableVerbatim() {
+        assertThat(UrlResolver.resolve("javascript:alert(1)"))
+            .startsWith("https://www.bing.com/search?q=")
+        assertThat(UrlResolver.resolve("javascript:alert(1)"))
+            .isNotEqualTo("javascript:alert(1)")
+        assertThat(UrlResolver.resolve("data:text/html,<script>alert(1)</script>"))
+            .startsWith("https://www.bing.com/search?q=")
+        assertThat(UrlResolver.isUrlLike("javascript:alert(1)")).isFalse()
+        assertThat(UrlResolver.isUrlLike("data:text/html,x")).isFalse()
+    }
+
     @Test fun fallsBackToSearchForPlainWords() {
         assertThat(UrlResolver.resolve("kotlin"))
             .isEqualTo("https://www.bing.com/search?q=kotlin")

@@ -113,6 +113,49 @@ class PlaybackPreferencesTest {
         assertThat(prefs.resumable().single().referer).isNull()
     }
 
+    /**
+     * 选集要跟着续播记录一起存。
+     *
+     * 不存的话，从「继续观看」点回去的播放器手里没有选集列表，左下角那对
+     * 「上一集 / 下一集」会整组消失——用户会以为功能被删了（这就是线上反馈的那条）。
+     */
+    @Test fun resumeEntryKeepsTheEpisodeList() {
+        val list = EpisodeList(
+            seriesTitle = "兰香如故",
+            episodes = listOf(
+                Episode("第 1 集", "https://c.com/play/a"),
+                Episode("第 2 集", "https://c.com/play/b"),
+                Episode("第 3 集", "https://c.com/play/c"),
+            ),
+            currentIndex = 0,
+        )
+        prefs.remember(
+            url, 600_000L, 3_600_000L,
+            title = "兰香如故 · 第 2 集",
+            episodes = EpisodeCodec.toJson(list),
+            episodeIndex = 1,
+        )
+        val entry = prefs.resumable().single()
+        val restored = EpisodeCodec.fromJson(entry.episodes)
+        assertThat(restored?.seriesTitle).isEqualTo("兰香如故")
+        assertThat(restored?.episodes?.map { it.url })
+            .containsExactly("https://c.com/play/a", "https://c.com/play/b", "https://c.com/play/c")
+            .inOrder()
+        // 正在播的是第 2 集，而列表里的 `current` 是页面上的第 1 集——下标必须单独存，
+        // 否则切过集之后点回来会跳错集。
+        assertThat(entry.episodeIndex).isEqualTo(1)
+        assertThat(restored?.currentIndex).isEqualTo(0)
+    }
+
+    /** 单集视频：没有选集，存下来就是空的（不能存出一个空列表来冒充剧集）。 */
+    @Test fun singleVideoKeepsNoEpisodeList() {
+        prefs.remember(url, 600_000L, 3_600_000L)
+        val entry = prefs.resumable().single()
+        assertThat(entry.episodes).isNull()
+        assertThat(entry.episodeIndex).isEqualTo(-1)
+        assertThat(EpisodeCodec.fromJson(entry.episodes)).isNull()
+    }
+
     /** 最近看的在最前——卡片第一张应该是用户最可能想接着看的那一集。 */
     @Test fun resumeListIsNewestFirst() {
         prefs.remember(url, 600_000L, 3_600_000L)

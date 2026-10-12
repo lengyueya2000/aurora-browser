@@ -30,9 +30,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -41,6 +43,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,6 +61,7 @@ import dev.aurora.browser.AuroraApp
 import dev.aurora.browser.BrowserViewModelFactory
 import dev.aurora.browser.BuildConfig
 import dev.aurora.browser.data.DownloadItem
+import dev.aurora.browser.data.DownloadRequest
 import dev.aurora.browser.data.DownloadsRepository
 import dev.aurora.browser.data.FaviconStore
 import dev.aurora.browser.domain.BackOutcome
@@ -205,6 +209,11 @@ fun BrowserScreen(
     var libraryTab by remember { mutableStateOf(LibraryTab.BOOKMARKS) }
     var downloadItems by remember { mutableStateOf<List<DownloadItem>>(emptyList()) }
     var offlineItems by remember { mutableStateOf<List<OfflineItem>>(emptyList()) }
+    // 离线缓存的落盘体积（`OfflineMedia.cacheBytes`）。跟列表一起刷，删除后就能立刻
+    // 看见数字变小——这是「删除是不是真删了」在非 root 设备上唯一的证据。
+    var offlineCacheBytes by remember { mutableLongStateOf(0L) }
+    // 页面自己发起的下载（`<a download>`、附件响应）先挂在这里，弹确认框，用户点了才真下。
+    var pendingDownload by remember { mutableStateOf<DownloadRequest?>(null) }
     var mediaSheet by remember { mutableStateOf<MediaSheet?>(null) }
     var resumeItems by remember { mutableStateOf(emptyList<ResumeEntry>()) }
     var tabThumbnails by remember { mutableStateOf(emptyMap<String, Bitmap>()) }
@@ -215,6 +224,18 @@ fun BrowserScreen(
     // 每次回到前台重读一遍：不重读的话，看完一集退回来，卡片上还是进去之前的进度。
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         resumeItems = PlaybackPreferences.create(context).resumable()
+    }
+
+    /**
+     * 重读下载管理要显示的三份数据：系统下载器的条目、离线缓存的条目、离线缓存的体积。
+     *
+     * 三个一起刷是必须的：只刷列表的话，删掉一条后列表空了、体积还停在旧值，看上去就像
+     * 「删了但没删干净」。
+     */
+    fun refreshDownloads() {
+        downloadItems = downloads.query()
+        offlineItems = OfflineMedia.items(context)
+        offlineCacheBytes = OfflineMedia.cacheBytes(context)
     }
 
     /**
@@ -244,15 +265,19 @@ fun BrowserScreen(
     LaunchedEffect(tabs.map { it.id }) { pool.retain(tabs.map { it.id }.toSet()) }
 
     // 下载页开着的时候按 [DOWNLOADS_REFRESH_MS] 刷一次。
-    // 只在真的有东西在跑时才查库：闲着的查询纯属浪费，也让速度计的采样间隔变得没有意义。
+    // 只在真的有东西在跑时才继续查库：闲着的轮询纯属浪费，也让速度计的采样间隔失去意义。
     // 循环不 break 而是每轮重新判断，这样在页面上新开一个下载时不用重建这个协程。
+    //
+    // 进页面时**先无条件查一次**：之前这里一进来就等 500ms、而且只在下一次判断为「有东西
+    // 在跑」时才真查，结果是「下载还没开始就先打开下载管理」看到一片空白，得退出重进才有
+    // 内容。菜单那两条入口虽然也各自查了一次，但把「进入即加载」放在这里才拦得住所有入口。
     LaunchedEffect(surface) {
         if (surface != BrowserSurface.Downloads) return@LaunchedEffect
+        refreshDownloads()
         while (true) {
             delay(DOWNLOADS_REFRESH_MS)
             if (downloadItems.any { it.isRunning } || offlineItems.any { it.isRunning }) {
-                downloadItems = downloads.query()
-                offlineItems = OfflineMedia.items(context)
+                refreshDownloads()
             }
         }
     }
@@ -303,11 +328,10 @@ fun BrowserScreen(
         pool.onSslError = { vm.onSslError() }
         pool.onExternalUrl = { _, url -> openExternal(context, url) }
         pool.onLoadError = { _, description -> loadError = description }
-        pool.onDownloadRequest = { _, request ->
-            val id = downloads.enqueue(request, referer = vm.activeTab.value.url)
-            vm.showMessage(if (id != null) "已开始下载" else "无法开始下载")
-            downloadItems = downloads.query()
-        }
+        // 页面发起的下载：不直接入队。`<a download>` 或附件响应可以没有任何用户点击就
+        // 触发（脚本自动点、加载即跳转），静默下载会白耗流量、占空间。先弹确认框，用户
+        // 点了「下载」才入队——浮层里那个「下载」按钮是用户自己点的，不走这条路。
+        pool.onDownloadRequest = { _, request -> pendingDownload = request }
         // 视频全屏：WebView 交出要全屏播放的 View，由我们挂到窗口上并切沉浸式。
         pool.onShowFullscreenView = { view, callback -> fullscreen.show(view, callback) }
         pool.onHideFullscreenView = { fullscreen.hide() }
@@ -438,8 +462,8 @@ fun BrowserScreen(
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing),
         ) {
-            // Page 内容常驻：WebView 一旦离开组合就会被 onDispose 销毁，回到网页态只能重新加载，
-            // 丢掉滚动位置与前进/后退历史（地址栏/标签网格来回切一次就中招）。
+            // Page 内容常驻：WebView 实例归池所有，离开组合不会销毁它，但宿主容器会被从窗口上
+            // 摘掉，WebView 跟着脱离窗口——渲染与页面定时器暂停，回来重新挂载还会闪一下。
             // 因此 Page 分支不再受 surface 控制，其余界面改为叠在它之上的不透明覆盖层。
             if (active.isNewTab) {
                 HomeScreen(
@@ -449,6 +473,8 @@ fun BrowserScreen(
                     favicons = favicons,
                     // 记住的地址就是可播地址（当时嗅探出来的那条），所以直接交给播放器；
                     // 标题与来源页一起带上——来源页决定 Referer，标题省得播放器再猜。
+                    // 选集也带上：播放器当初把它存进了这条记录，不带的话左下角那对
+                    // 「上一集 / 下一集」会消失（那对按钮只在知道还有相邻集时才出现）。
                     onResume = { entry ->
                         openInPlayer(
                             context = context,
@@ -457,6 +483,8 @@ fun BrowserScreen(
                             referer = entry.referer,
                             extra = (entry.positionMs / 1000L).toString(),
                             vm = vm,
+                            episodes = EpisodeCodec.fromJson(entry.episodes),
+                            episodeIndex = entry.episodeIndex,
                         )
                     },
                     onForgetResume = { entry ->
@@ -557,17 +585,43 @@ fun BrowserScreen(
                 BrowserSurface.Downloads -> DownloadsScreen(
                     downloads = downloadItems,
                     onOpen = { id -> downloads.contentUri(id)?.let { openUri(context, it, vm) } },
-                    onRemove = { id -> downloads.remove(id); downloadItems = downloads.query() },
+                    onRemove = { id -> downloads.remove(id); refreshDownloads() },
                     onBack = { vm.closeSecondarySurface() },
                     // 离线缓存的条目只能在应用内播：它存在应用私有目录里，没有对外的文件。
+                    // 没下完也能点（边下边看）：播放器读的是下载用的同一份缓存，已落盘的分片
+                    // 直接命中，没下到的当场从网络补。
                     offline = offlineItems,
+                    cacheBytes = offlineCacheBytes,
                     onOpenOffline = { item ->
                         vm.closeSecondarySurface()
-                        openInPlayer(context, item.url, item.title, active.url, "0", vm)
+                        // 离线缓存的条目也带上当初记下的选集：同一个流地址在续播记录里
+                        // 有就能拿到，这样「边下边看」进去也有上一集 / 下一集可点。
+                        val saved = resumeItems.firstOrNull { it.url == item.url }
+                        openInPlayer(
+                            context = context,
+                            url = item.url,
+                            title = item.title,
+                            referer = active.url,
+                            extra = "0",
+                            vm = vm,
+                            episodes = EpisodeCodec.fromJson(saved?.episodes),
+                            episodeIndex = saved?.episodeIndex ?: -1,
+                        )
                     },
                     onRemoveOffline = { item ->
                         OfflineMedia.remove(context, item.url)
-                        offlineItems = OfflineMedia.items(context)
+                        refreshDownloads()
+                    },
+                    // 暂停 / 继续：只有离线缓存这条能给（系统下载器没有公开的按条暂停接口，
+                    // 见 DownloadsScreen 的文件头注释）。Media3 的下载器自己维护分片断点，
+                    // 继续时从断点接着下，不重头来。
+                    onPauseOffline = { item ->
+                        OfflineMedia.pause(context, item.url)
+                        refreshDownloads()
+                    },
+                    onResumeOffline = { item ->
+                        OfflineMedia.resume(context, item.url)
+                        refreshDownloads()
                     },
                 )
                 BrowserSurface.Privacy -> PrivacyScreen(
@@ -595,8 +649,7 @@ fun BrowserScreen(
                     desktopMode = desktopMode,
                     onDesktopModeChange = { vm.setDesktopMode(it) },
                     onOpenDownloads = {
-                        downloadItems = downloads.query()
-                        offlineItems = OfflineMedia.items(context)
+                        refreshDownloads()
                         vm.openSurface(BrowserSurface.Downloads)
                     },
                     onBack = { vm.closeSecondarySurface() },
@@ -658,8 +711,7 @@ fun BrowserScreen(
                             vm.openSurface(BrowserSurface.Library)
                         },
                         onDownloads = {
-                            downloadItems = downloads.query()
-                            offlineItems = OfflineMedia.items(context)
+                            refreshDownloads()
                             vm.openSurface(BrowserSurface.Downloads)
                         },
                         onReader = { extractReadable(pool, active.id, vm) { reader = it } },
@@ -799,6 +851,42 @@ fun BrowserScreen(
             )
             null -> Unit
         }
+
+        // 页面发起的下载确认框（挂在 onDownloadRequest 上，见那里）。浮层/菜单里用户主动
+        // 点的「下载」不走这条，不弹框。
+        pendingDownload?.let { request ->
+            AlertDialog(
+                onDismissRequest = { pendingDownload = null },
+                title = { Text("下载文件", color = Aurora.colors.text) },
+                text = {
+                    Column {
+                        Text("当前网页想下载这个文件：", color = Aurora.colors.textSecondary)
+                        Text(
+                            DownloadsRepository.deriveFileName(
+                                request.url,
+                                request.contentDisposition,
+                                request.mimeType,
+                            ),
+                            color = Aurora.colors.text,
+                            modifier = Modifier.padding(top = AuroraSpacing.s),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val id = downloads.enqueue(request, referer = vm.activeTab.value.url)
+                            vm.showMessage(if (id != null) "已开始下载" else "无法开始下载")
+                            refreshDownloads()
+                            pendingDownload = null
+                        },
+                    ) { Text("下载") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDownload = null }) { Text("取消") }
+                },
+            )
+        }
     }
 }
 
@@ -833,6 +921,7 @@ private fun openInPlayer(
     extra: String,
     vm: BrowserViewModel,
     episodes: EpisodeList? = null,
+    episodeIndex: Int = -1,
     incognito: Boolean = false,
     desktopMode: Boolean = false,
 ) {
@@ -847,7 +936,9 @@ private fun openInPlayer(
         // 一个 Parcelable 列表——跨进程重建（进程被回收后恢复）时 JSON 更耐操，
         // 而且它能在纯 JVM 单测里往返（见 EpisodeCodecTest）。
         episodes = episodes?.let { EpisodeCodec.toJson(it) },
-        episodeIndex = episodes?.currentIndex ?: -1,
+        // 从「继续观看」回来时，正在播的那一集由存下来的下标决定，不能再用列表里的
+        // `current`——那个是当初那个**页面**上的集，切过集之后就对不上了。
+        episodeIndex = if (episodeIndex >= 0) episodeIndex else episodes?.currentIndex ?: -1,
         incognito = incognito,
         desktopMode = desktopMode,
     )
@@ -927,7 +1018,13 @@ private fun MenuGroupTitle(text: String) {
     )
 }
 
-/** 无痕标签的常驻提示条（规格 5.10）：整屏不做独立配色，靠这条说明 + 工具栏描边区分。 */
+/**
+ * 无痕标签的常驻提示条（规格 5.10）：整屏不做独立配色，靠这条说明 + 工具栏描边区分。
+ *
+ * 文案只说做得到的事，**刻意不提 Cookie**：Android 的 WebView 全进程共用一个 Cookie 罐，
+ * 没有按实例隔离的接口，无痕标签照样会带上普通标签存下的 Cookie、它新建的 Cookie 也留在
+ * 磁盘上。写「不留 Cookie」就是一句做不到的承诺（规格 5.10 已同步删掉这一条）。
+ */
 @Composable
 private fun IncognitoBanner() {
     val c = Aurora.colors
@@ -946,7 +1043,7 @@ private fun IncognitoBanner() {
             modifier = Modifier.size(16.dp),
         )
         Text(
-            "无痕浏览：不记录历史、不留 Cookie、不保存表单",
+            "无痕浏览：不记录历史、不保存表单、不缓存页面、不使用本地存储",
             color = c.textMuted,
             style = MaterialTheme.typography.labelSmall,
         )

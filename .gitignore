@@ -6,6 +6,8 @@ local.properties
 .tmp/
 .superpowers/
 .kotlin/
+# 模拟器验证时的截图，属于本地过程产物
+.shots/
 # 发布签名：私钥与口令绝不入库
 keystore.properties
 .signing/

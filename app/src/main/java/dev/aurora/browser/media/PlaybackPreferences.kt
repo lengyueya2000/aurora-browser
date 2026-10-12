@@ -10,6 +10,11 @@ import org.json.JSONObject
  *
  * 除了进度还带着标题和来源页地址：主页那张卡片要显示「哪一集」，点进去也要能把
  * Referer 一起交给播放器（见 [RefererFallbackDataSource]）。
+ *
+ * 还带着**选集列表**（[episodes]，[EpisodeCodec.toJson] 的原样字符串）。不存的话，从
+ * 「继续观看」点回去就只剩一个光秃秃的播放器：选集是页面上下文，而这条记录是播放器写的，
+ * 播放器手里只有当初随 Intent 传进来的那份。少了它，左下角的「上一集 / 下一集」会整组消失
+ * ——用户会以为功能被删了，而不是「这一页没判出剧集」。
  */
 data class ResumeEntry(
     val url: String,
@@ -19,6 +24,10 @@ data class ResumeEntry(
     val durationMs: Long,
     /** 最后一次观看的时间戳，用来排序。 */
     val at: Long,
+    /** 选集列表（`EpisodeCodec.toJson` 的原样字符串）；单集视频为 `null`。 */
+    val episodes: String? = null,
+    /** 当时看的是第几集。列表里的 `current` 是页面上的那一集，切集后不再等于它。 */
+    val episodeIndex: Int = -1,
 ) {
     /** 已看比例，0..1；时长还不知道时为 0。 */
     val progress: Float
@@ -65,6 +74,10 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
      *
      * @param title 页面标题；空的话卡片上就显示地址。
      * @param referer 来源页地址，重开时要一起交给播放器。
+     * @param episodes 选集列表（`EpisodeCodec.toJson` 的原样字符串）。存下来是为了让
+     *   「继续观看」点回去时左下角那对「上一集 / 下一集」还在——那是页面上下文，丢了
+     *   播放器就无从知道还有没有相邻的集。
+     * @param episodeIndex 当时看的是第几集。
      */
     fun remember(
         url: String,
@@ -72,6 +85,8 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
         durationMs: Long,
         title: String = "",
         referer: String? = null,
+        episodes: String? = null,
+        episodeIndex: Int = -1,
     ) {
         if (url.isBlank()) return
         if (positionMs < MIN_RESUME_MS) return
@@ -83,6 +98,8 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
             positionMs = positionMs,
             durationMs = durationMs.coerceAtLeast(0L),
             at = System.currentTimeMillis(),
+            episodes = episodes?.takeIf { it.isNotBlank() },
+            episodeIndex = episodeIndex,
         )
         // 同一地址只留最新的一条并移到最前，与书签 / 历史的做法一致。
         val next = (listOf(entry) + resumable().filterNot { it.url == url }).take(MAX_RESUME)
@@ -115,6 +132,8 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
                     positionMs = o.optLong("position"),
                     durationMs = o.optLong("duration"),
                     at = o.optLong("at"),
+                    episodes = o.optString("episodes").takeIf { it.isNotBlank() },
+                    episodeIndex = o.optInt("episodeIndex", -1),
                 )
             }.sortedByDescending { it.at }
         }.getOrDefault(emptyList())
@@ -210,7 +229,9 @@ class PlaybackPreferences(private val prefs: SharedPreferences) {
                     .put("referer", it.referer ?: "")
                     .put("position", it.positionMs)
                     .put("duration", it.durationMs)
-                    .put("at", it.at),
+                    .put("at", it.at)
+                    .put("episodes", it.episodes ?: "")
+                    .put("episodeIndex", it.episodeIndex),
             )
         }
         prefs.edit().putString(KEY_RESUME, array.toString()).apply()

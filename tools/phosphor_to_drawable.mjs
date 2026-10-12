@@ -25,6 +25,7 @@ const ICONS = {
   'globe': 'globe', 'trash-simple': 'trash', 'clock': 'clock',
   'desktop': 'desktop', 'translate': 'translate', 'image': 'image', 'sparkle': 'sparkle',
   'arrow-clockwise': 'refresh', 'clipboard-text': 'clipboard',
+  'play': 'play', 'pause': 'pause',
 };
 
 function assertNamesMatchAuroraIcons() {

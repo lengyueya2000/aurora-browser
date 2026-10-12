@@ -99,7 +99,9 @@ class PrefsBrowserStore(context: Context) : BrowserStore {
         // 存储损坏时宁可当空列表，也不要让应用在启动路径上崩。
         return runCatching {
             val array = JSONArray(raw)
-            (0 until array.length()).map { array.getJSONObject(it) }
+            // 逐元素取：`getJSONObject` 碰到一个坏元素就抛，整张列表会被一起丢掉（书签/历史
+            // 全没了）。`optJSONObject` 对非对象返回 null，跳过坏的那条，其余照常读出来。
+            (0 until array.length()).mapNotNull { array.optJSONObject(it) }
         }.getOrDefault(emptyList())
     }
 
