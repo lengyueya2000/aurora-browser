@@ -73,11 +73,30 @@ object SiteAdRules {
      */
     const val TAPJACK_CLASS = "fbheyuxg"
 
+    /**
+     * 底部横幅广告的类名。
+     *
+     * 和点击劫持不是同一套：这是一组 `position:fixed` 的 `<div class="ouWshumi">`，
+     * 靠 `background-position` 把一张大图切成小块拼出横幅，所以每个节点都看不出是广告，
+     * 只有整组拼起来才是。投放是**随机/低频**的（多次加载才碰到一次），但注入它的脚本
+     * 是固定的：`qiq15od.com:8005/d/6448`，和劫持那一路同源。
+     */
+    const val BANNER_CLASS = "ouWshumi"
+
     /** 年龄确认弹窗。整个节点删掉即可，站点脚本对不存在的节点做 `removeClass` 是空转。 */
     const val AGE_GATE_SELECTOR = ".wrap-dialog-t"
 
     /** 广告脚本插进来的 `<style>`，会把 `body` 底部撑出 100px 空白。 */
     const val STYLE_ID = "fbheyuxg_style_id"
+
+    /**
+     * 章节列表的容器与按钮。
+     *
+     * 站点把按钮设成 `height:1rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap`，
+     * 三列固定宽度装不下「第N话-完整标题」，一律被截成「第1话-不打…」。这里把它改回可换行，
+     * 并让容器高度自适应。见 [CHAPTER_CSS]。
+     */
+    const val CHAPTER_LIST_SELECTOR = ".content_playlist"
 
     /**
      * 识别广告脚本的字符串特征。
@@ -110,6 +129,91 @@ object SiteAdRules {
      */
     private const val SWEEP_MS = 800
 
+    /**
+     * 让章节按钮的文字完整显示的样式覆盖。
+     *
+     * ## 为什么要动样式
+     *
+     * 详情页的「播放列表」是 3 列固定宽度网格，每个按钮的样式是
+     *
+     * ```
+     * height: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+     * ```
+     *
+     * 装不下「第N话-完整标题」这种长文本，一律截成「第1话-不打…」。实测 202 个按钮里
+     * 101 个被截断，最长的一条需要 206px 而可用宽度只有 109px。
+     *
+     * ## 三个坑（都是实测踩过的）
+     *
+     * 1. **只放开 `white-space` 不行**：容器 `ul` 自己是 `white-space:nowrap`，
+     *    按钮虽然能换行了，`li` 却被挤成一行（实测 12 个一行、容器宽度涨到 16285px）。
+     *    所以 `ul` 的 `nowrap` 必须一起重置。
+     * 2. **`li` 用 `float` 会错位**：原来的 `li` 是 `float:left; width:16.6667%`。
+     *    按钮高度不一（一行标题 vs 三行标题）时，float 布局会出现「第4话」和「第9话」
+     *    并排这种参差。改用 `inline-block` + `vertical-align:top` 才能保证逐行对齐。
+     * 3. **`inline-block` 之间的空白**：`li` 之间的换行符会渲染成空格，三列会挤成两列。
+     *    把容器的 `font-size` 设成 0 消掉这个空白，再在 `li` 上把字号设回来。
+     *
+     * 这套改动的净效果：202 个按钮全部完整显示、保持 3 列、章节顺序正确、无横向溢出。
+     */
+    val CHAPTER_CSS: String = """
+        .content_playlist {
+          white-space: normal !important;
+          height: auto !important;
+          max-height: none !important;
+          overflow: visible !important;
+          font-size: 0 !important;
+        }
+        .content_playlist li {
+          float: none !important;
+          display: inline-block !important;
+          vertical-align: top !important;
+          width: 33.3333% !important;
+          padding-bottom: 0.25rem !important;
+          padding-right: 0.25rem !important;
+          box-sizing: border-box !important;
+          font-size: 14.42px !important;
+        }
+        .content_playlist li a {
+          overflow: visible !important;
+          text-overflow: clip !important;
+          white-space: normal !important;
+          height: auto !important;
+          min-height: 1rem !important;
+          padding-top: 0.15rem !important;
+          padding-bottom: 0.15rem !important;
+          word-break: break-word !important;
+          line-height: 1.3 !important;
+        }
+    """.trimIndent()
+
+    /**
+     * 把一段文本转成 JS 字符串字面量（含引号）。
+     *
+     * CSS 里有引号、换行、反斜杠，直接塞进 `'...'` 会拼出语法错——而这类错在页面上
+     * 只表现为「注入返回值是一句 SyntaxError」，广告照放、样式没生效，没有任何提示。
+     *
+     * 手写而不是用 `org.json.JSONObject.quote`：那个类在 JVM 单元测试里是 Android stub，
+     * 一调用就抛 `RuntimeException: Stub!`，整个 object 的静态初始化会跟着失败。
+     */
+    internal fun jsString(text: String): String {
+        val sb = StringBuilder(text.length + 16)
+        sb.append('"')
+        for (c in text) {
+            when (c) {
+                '\\' -> sb.append("\\\\")
+                '"' -> sb.append("\\\"")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                // 控制字符一律转成 \uXXXX，免得把 JS 字符串弄断。
+                else -> if (c < ' ') sb.append("\\u%04x".format(c.code)) else sb.append(c)
+            }
+        }
+        sb.append('"')
+        return sb.toString()
+    }
+
     /** 这个地址是不是本站（含子域）。 */
     fun appliesTo(url: String): Boolean {
         val host = runCatching { java.net.URI(url).host }.getOrNull()?.lowercase() ?: return false
@@ -134,8 +238,11 @@ object SiteAdRules {
           if (window.__auroraSiteAd) { window.__auroraSiteAd.run(); return 'ok'; }
 
           var TAP = '$TAPJACK_CLASS';
+          var BANNER = '$BANNER_CLASS';
           var GATE = '$AGE_GATE_SELECTOR';
           var STYLE_ID = '$STYLE_ID';
+          var CHAPTER_STYLE_ID = 'aurora-chapter-style';
+          var CHAPTER_CSS = ${jsString(CHAPTER_CSS)};
           var MARKERS = ${SCRIPT_MARKERS.joinToString(", ") { "'$it'" }.let { "[$it]" }};
           var AD_HOSTS = ${AD_HOSTS.joinToString(", ") { "'$it'" }.let { "[$it]" }};
           var SWEEP_MS = $SWEEP_MS;
@@ -187,20 +294,40 @@ object SiteAdRules {
             var taps = document.querySelectorAll('[class*="' + TAP + '"]');
             for (var i = 0; i < taps.length; i++) drop(taps[i]);
 
-            // 二、广告插进来的样式：不删的话 body 底部会多出 100px 空白。
+            // 二、底部横幅广告。它把一张大图切成若干 fixed 小块拼出来，所以每个节点都
+            //     看不出是广告，只有整组拼起来才是——按类名整组删。
+            var banners = document.querySelectorAll('[class*="' + BANNER + '"]');
+            for (var b = 0; b < banners.length; b++) drop(banners[b]);
+
+            // 三、广告插进来的样式：不删的话 body 底部会多出 100px 空白。
             drop(document.getElementById(STYLE_ID));
 
-            // 三、年龄确认弹窗：整个节点删掉。
+            // 四、年龄确认弹窗：整个节点删掉。
             var gates = document.querySelectorAll(GATE);
             for (var j = 0; j < gates.length; j++) drop(gates[j]);
 
-            // 四、广告脚本节点本身。已经执行过的删掉不会「撤销」，但能防止它被再次触发。
+            // 五、广告脚本节点本身。已经执行过的删掉不会「撤销」，但能防止它被再次触发。
             var scripts = document.querySelectorAll('script');
             for (var k = 0; k < scripts.length; k++) {
               var s = scripts[k];
               if (s.src) { if (isAdUrl(s.src)) drop(s); continue; }
               if (hasMarker(s.textContent)) drop(s);
             }
+          }
+
+          /**
+           * 让章节按钮的文字完整显示。
+           *
+           * 站点的样式把按钮锁成单行 + 省略号，长标题一律截断。覆盖规则见 [CHAPTER_CSS]。
+           * 幂等：先删旧节点再加，SPA 反复触发也不会堆。
+           */
+          function applyChapterStyle() {
+            if (document.getElementById(CHAPTER_STYLE_ID)) return;
+            if (!document.head) return;
+            var el = document.createElement('style');
+            el.id = CHAPTER_STYLE_ID;
+            el.textContent = CHAPTER_CSS;
+            document.head.appendChild(el);
           }
 
           // 方块是解析期用 document.write 写出来的。拦在写入这一层，方块根本不会出现，
@@ -247,12 +374,12 @@ object SiteAdRules {
 
           window.__auroraSiteAd = { run: run, observe: observe, strip: stripTree };
 
-          function boot() { observe(); run(); }
+          function boot() { observe(); run(); applyChapterStyle(); }
           boot();
           document.addEventListener('DOMContentLoaded', boot);
           window.addEventListener('load', boot);
           // 第二段脚本在 1000ms / 1500ms 后还会动作，所以要有节奏地扫。
-          setInterval(function () { if (!document.hidden) run(); }, SWEEP_MS);
+          setInterval(function () { if (!document.hidden) { run(); applyChapterStyle(); } }, SWEEP_MS);
         })();
     """.trimIndent()
 }

@@ -38,6 +38,63 @@ class SiteAdRulesTest {
         assertThat(script).contains("[class*=\"' + TAP + '\"]")
     }
 
+    /**
+     * 底部横幅广告是另一套东西，别跟劫持方块混在一起。
+     *
+     * 它把一张大图切成若干 `position:fixed` 小块拼出来，每个节点单独看都不像广告，
+     * 所以必须按类名整组删。
+     */
+    @Test fun removesTheBottomBannerAd() {
+        assertThat(SiteAdRules.BANNER_CLASS).isEqualTo("ouWshumi")
+        val script = SiteAdRules.SCRIPT
+        assertThat(script).contains("var BANNER = 'ouWshumi';")
+        assertThat(script).contains("[class*=\"' + BANNER + '\"]")
+    }
+
+    /**
+     * 章节按钮的文字要完整显示。
+     *
+     * 站点把按钮锁成单行 + 省略号，实测 202 个按钮里 101 个被截断。这里的断言盯的是
+     * 三个必须同时成立的覆盖（少一个布局就会坏，见 CHAPTER_CSS 的注释）：
+     * 容器 `ul` 的 `nowrap` 要重置、`li` 要改成 `inline-block`、按钮要能换行。
+     */
+    @Test fun makesChapterTitlesFullyVisible() {
+        val css = SiteAdRules.CHAPTER_CSS
+        assertThat(css).contains(".content_playlist")
+        // 1. 容器的 nowrap 必须重置，否则 li 会被挤成一行。
+        assertThat(css).contains("white-space: normal !important")
+        // 2. li 用 float 会因高度不齐而错位，改成 inline-block。
+        assertThat(css).contains("display: inline-block !important")
+        assertThat(css).contains("float: none !important")
+        // 3. 按钮本身要能换行、不能被省略号截断。
+        assertThat(css).contains("text-overflow: clip !important")
+        assertThat(css).contains("height: auto !important")
+        // inline-block 之间的空白靠 font-size:0 消掉，否则三列会挤成两列。
+        assertThat(css).contains("font-size: 0 !important")
+
+        // 样式是通过 <style> 节点注入的，且幂等。
+        val script = SiteAdRules.SCRIPT
+        assertThat(script).contains("aurora-chapter-style")
+        assertThat(script).contains("applyChapterStyle")
+        assertThat(script).contains("document.getElementById(CHAPTER_STYLE_ID)) return")
+    }
+
+    /**
+     * CSS 塞进 JS 字符串必须转义。
+     *
+     * CSS 里有换行和引号，直接拼进 `'...'` 会拼出语法错——而这类错在页面上只表现为
+     * 「注入返回值是一句 SyntaxError」，广告照放、样式没生效，没有任何提示。
+     */
+    @Test fun chapterCssIsSafelyEscapedIntoTheScript() {
+        val script = SiteAdRules.SCRIPT
+        // 用 JSON 编码的字符串字面量（双引号开头），而不是裸拼单引号。
+        assertThat(script).contains("var CHAPTER_CSS = \"")
+        // 换行必须被转义成 \n，不能是真实的换行符——那会直接截断 JS 字符串。
+        val cssLine = script.lines().first { it.contains("var CHAPTER_CSS = ") }
+        assertThat(cssLine).doesNotContain("important !")
+        assertThat(script).contains("\\n")
+    }
+
     @Test fun removesTheAgeGate() {
         assertThat(SiteAdRules.AGE_GATE_SELECTOR).isEqualTo(".wrap-dialog-t")
         assertThat(SiteAdRules.SCRIPT).contains(".wrap-dialog-t")
