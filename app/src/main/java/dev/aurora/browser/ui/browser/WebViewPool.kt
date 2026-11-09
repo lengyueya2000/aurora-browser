@@ -627,7 +627,15 @@ class WebViewPool(
                     // 不是保证：万一落到了旧文档上，onPageFinished 那次和脚本自身的
                     // MutationObserver + 轮询还能兜住（见 AdBlockScript 的注释）。
                     if (blockTrackers()) {
-                        runCatching { view.evaluateJavascript(AdBlockScript.SCRIPT, null) }
+                        // 站点专用规则要跟去广告脚本同一时刻注入：`rmtt4.com` 的点击劫持
+                        // 方块是页面内联脚本在解析期用 `document.write` 写出来的，晚了就只能
+                        // 事后清理（方块会闪一下）。见 [SiteAdRules]。
+                        runCatching {
+                            view.evaluateJavascript(
+                                AdBlockScript.SCRIPT + "\n" + SiteAdRules.scriptFor(url),
+                                null,
+                            )
+                        }
                     }
                     onPageStarted(tabId)
                 }
@@ -640,7 +648,12 @@ class WebViewPool(
                     //   永久停在工具栏底下、滚也滚不出来，所以给文档尾部补一段滚动空间；
                     // - 给页面里的每个 <video> 贴上「全屏 / 下载 / 投屏」浮层。
                     // 三段都是完整语句的 IIFE，拼起来等价于依次执行。
-                    val adBlock = if (blockTrackers()) AdBlockScript.SCRIPT + "\n" else ""
+                    // 站点专用规则跟在去广告脚本后面，同样幂等。
+                    val adBlock = if (blockTrackers()) {
+                        AdBlockScript.SCRIPT + "\n" + SiteAdRules.scriptFor(url) + "\n"
+                    } else {
+                        ""
+                    }
                     runCatching {
                         view.evaluateJavascript(
                             adBlock +
@@ -665,7 +678,17 @@ class WebViewPool(
                     request: WebResourceRequest,
                 ): Boolean {
                     val scheme = request.url.scheme?.lowercase().orEmpty()
-                    if (scheme == "http" || scheme == "https") return false
+                    if (scheme == "http" || scheme == "https") {
+                        // 点击劫持的最后一道防线。前面几层（拦 document.write、删节点、掐
+                        // WebSocket）都在 JS 里，注入晚于页面脚本时可能赶不上；这一层不看
+                        // 时序，只要目标是广告域名就拒绝。见 [SiteAdRules]。
+                        // 仅当拦截开着才生效——用户关掉拦截就该拿到「原样」的站点。
+                        if (blockTrackers() && SiteAdRules.isAdHost(request.url.toString())) {
+                            onTrackerBlocked(tabId)
+                            return true
+                        }
+                        return false
+                    }
                     // 只放行主框架的跳转。子框架（广告 iframe）里的 `intent://`、`market://`
                     // 不该在用户没点任何东西的情况下拉起外部应用——那是「打开网页就被拉走」
                     // 的一条路子。拦掉它，页面本身的展示不受影响。
@@ -713,6 +736,15 @@ class WebViewPool(
                     // 用户看到的就是一片纯白、地址栏还停在那个域名——「点了链接网页全白」。
                     // 追踪脚本永远不是主文档，拦主文档没有任何收益，只有白屏这一个后果。
                     if (request.isForMainFrame) return null
+                    // 站点专用的广告域名（点击劫持的跳转目标、WebSocket 候选）也在这里拦。
+                    // 它们不进全局名单：[SiteAdRules] 收的是实测域名，广告联盟会轮换，
+                    // 塞进全局黑名单等于替所有站点做决定。
+                    if (SiteAdRules.isAdHost(request.url.toString())) {
+                        onTrackerBlocked(tabId)
+                        return WebResourceResponse(
+                            "text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)),
+                        )
+                    }
                     if (!dev.aurora.browser.domain.TrackerBlocklist.isBlocked(request.url.toString())) {
                         return null
                     }
