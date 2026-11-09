@@ -141,6 +141,44 @@ class SiteAdRulesTest {
     }
 
     /**
+     * `document.write` 只能在解析期放行。
+     *
+     * 这是 1.19 的一个真实回归：包装函数把非广告的 write 无条件转给原生实现，而
+     * `document.write` 在文档加载完成之后调用会隐式触发 `document.open()`，把整个文档
+     * 清空再重新解析——页面表现为「一直刷新」。
+     *
+     * 实测：加载完后调一次 write，body 文字从 2944 字掉到 4 字、`readyState` 从
+     * complete 退回 loading。从阅读页后退回详情页时正好走这条路径：站点脚本重跑、
+     * 注入也重跑，而那时文档已经是 complete。
+     */
+    @Test fun onlyForwardsDocumentWriteWhileParsing() {
+        val script = SiteAdRules.SCRIPT
+        // 必须在转发前判 readyState，且判据是 'loading'。
+        assertThat(script).contains("document.readyState !== 'loading'")
+        // 这个判断必须出现在 nativeWrite 调用之前——顺序错了等于没修。
+        val guardIdx = script.indexOf("document.readyState !== 'loading'")
+        val nativeIdx = script.indexOf("nativeWrite.apply")
+        assertThat(guardIdx).isAtLeast(0)
+        assertThat(nativeIdx).isAtLeast(0)
+        assertThat(guardIdx).isLessThan(nativeIdx)
+    }
+
+    /**
+     * 删 `<script>` 节点同样只在解析期做。
+     *
+     * 文档加载完后站点脚本还会重跑，这时删脚本节点没有任何收益，反而会扰动页面。
+     */
+    @Test fun removesAdScriptNodesOnlyWhileParsing() {
+        val script = SiteAdRules.SCRIPT
+        val marker = "五、广告脚本节点本身"
+        val idx = script.indexOf(marker)
+        assertThat(idx).isAtLeast(0)
+        // 这一段的前面必须紧跟 readyState 判断。
+        val nearby = script.substring(idx, minOf(script.length, idx + 400))
+        assertThat(nearby).contains("document.readyState === 'loading'")
+    }
+
+    /**
      * WebSocket 那一路拦不住内容，只能掐连接。
      *
      * 广告用 `wss://…0v3xzl6.com:20095` 拉 base64 代码再 `new Function` 执行，内容是服务端

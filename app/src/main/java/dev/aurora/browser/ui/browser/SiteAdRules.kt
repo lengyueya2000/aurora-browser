@@ -307,11 +307,15 @@ object SiteAdRules {
             for (var j = 0; j < gates.length; j++) drop(gates[j]);
 
             // 五、广告脚本节点本身。已经执行过的删掉不会「撤销」，但能防止它被再次触发。
-            var scripts = document.querySelectorAll('script');
-            for (var k = 0; k < scripts.length; k++) {
-              var s = scripts[k];
-              if (s.src) { if (isAdUrl(s.src)) drop(s); continue; }
-              if (hasMarker(s.textContent)) drop(s);
+            //     只在解析期做：文档加载完后站点脚本还会重跑，这时删 <script> 节点没有
+            //     任何收益，反而会让页面重新解析一遍（和 document.write 同一个坑）。
+            if (document.readyState === 'loading') {
+              var scripts = document.querySelectorAll('script');
+              for (var k = 0; k < scripts.length; k++) {
+                var s = scripts[k];
+                if (s.src) { if (isAdUrl(s.src)) drop(s); continue; }
+                if (hasMarker(s.textContent)) drop(s);
+              }
             }
           }
 
@@ -332,13 +336,24 @@ object SiteAdRules {
 
           // 方块是解析期用 document.write 写出来的。拦在写入这一层，方块根本不会出现，
           // 也就没有「闪一下再消失」。顺带让第一段脚本拿不到方块、自己抛错停掉。
+          //
+          // **只放行解析期。** `document.write` 在文档加载完成（readyState 不是 loading）
+          // 之后调用会隐式触发 `document.open()`，把整个文档清空再重新解析——页面表现为
+          // 「一直刷新」。实测：加载完后调一次 write，body 文字从 2944 字掉到 4 字、
+          // readyState 从 complete 退回 loading。
+          //
+          // 从阅读页后退回详情页时正好会走到这条路径：站点脚本重跑、我们的注入也重跑，
+          // 而那时文档已经是 complete。所以这里必须判 readyState，不能无条件转发给原生。
+          // 丢掉的 write 只可能是广告或页面加载完之后的迟到写入，两者都不该执行。
           var nativeWrite = document.write;
           document.write = function (markup) {
+            if (document.readyState !== 'loading') return;
             if (hasMarker(String(markup))) return;
             return nativeWrite.apply(document, arguments);
           };
 
           // 第二段脚本在 1000ms 后用 insertAdjacentHTML 追加方块。
+          // 这个没有 document.write 那种「清空文档」的副作用，正常转发即可。
           if (window.Element && Element.prototype.insertAdjacentHTML) {
             var nativeInsert = Element.prototype.insertAdjacentHTML;
             Element.prototype.insertAdjacentHTML = function (position, markup) {
