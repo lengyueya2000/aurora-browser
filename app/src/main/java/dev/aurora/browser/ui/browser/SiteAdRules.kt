@@ -90,13 +90,60 @@ object SiteAdRules {
     const val STYLE_ID = "fbheyuxg_style_id"
 
     /**
-     * 章节列表的容器与按钮。
+     * 章节列表的容器。
      *
      * 站点把按钮设成 `height:1rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap`，
      * 三列固定宽度装不下「第N话-完整标题」，一律被截成「第1话-不打…」。这里把它改回可换行，
      * 并让容器高度自适应。见 [CHAPTER_CSS]。
      */
     const val CHAPTER_LIST_SELECTOR = ".content_playlist"
+
+    /**
+     * 阅读页的路径前缀。
+     *
+     * 只有这个前缀下的页面进入「阅读模式」：隐藏站点自己的顶部栏（含搜索框）与底部导航栏。
+     * 详情页/首页不隐藏——那些页面的导航是真需要的，藏起来等于把站点功能砍掉。
+     */
+    const val READER_PATH_PREFIX = "/comics-read/"
+
+    /**
+     * 阅读模式下要隐藏的站点元素。
+     *
+     * - `#topnav` / `.head_box`：顶部栏，103px 高，装着 logo、搜索框、菜单。
+     * - `.head_search` / `.head_hot_search`：搜索框本身（详情页上它在顶部栏里是展开的，
+     *   阅读页上虽然被折叠成 0 高度，但一起写上，站点改版也不会漏）。
+     * - `.foot_mnav`：底部「首页 / 分类 / 最新 / 排行 / 书架」固定导航栏，57px 高。
+     *
+     * ## 刻意**不**隐藏的东西
+     *
+     * - `.foot_nav`：这块静态页脚里装着**繁简切换、暗夜/白昼模式、返回顶部**三个功能，
+     *   藏掉等于把站点功能砍了。它本来也在页面最末尾，不占阅读视野。
+     * - `.positionFooter`：阅读页真正的翻页条（「章节目录 / 下一章」），在页面末尾，
+     *   是阅读流程的一部分，必须留着。
+     *
+     * 用 `display:none` 而不是 `visibility:hidden`：后者元素仍然占位，阅读区还是被挤掉
+     * 103px + 57px 的高度。
+     */
+    val READER_HIDE_CSS: String = """
+        #topnav,
+        .head_box,
+        .head_search,
+        .head_hot_search,
+        .foot_mnav {
+          display: none !important;
+        }
+    """.trimIndent()
+
+    /**
+     * 是不是阅读页。
+     *
+     * 只看 path，不看 host——调用方已经用 [appliesTo] 过滤过主机了。
+     * 参数可空是因为调用方（`BrowserScreen`）手上的 `active.url` 是 `String?`
+     * （新标签页还没有地址），空值一律当作「不是阅读页」。
+     */
+    fun isReaderPage(url: String?): Boolean =
+        runCatching { java.net.URI(url.orEmpty()).path.orEmpty() }.getOrDefault("")
+            .startsWith(READER_PATH_PREFIX)
 
     /**
      * 识别广告脚本的字符串特征。
@@ -230,12 +277,66 @@ object SiteAdRules {
      * 该给这个地址注入哪段脚本：本站返回 [SCRIPT]，别的一律空串。
      *
      * 空串而不是 `null`，是为了让调用方可以无条件拼接（`a + "\n" + b`）。
+     *
+     * 阅读页会多注入一段「隐藏站点顶栏/底栏」的样式，见 [readerScript]。
      */
-    fun scriptFor(url: String): String = if (appliesTo(url)) SCRIPT else ""
+    fun scriptFor(url: String): String = when {
+        !appliesTo(url) -> ""
+        isReaderPage(url) -> SCRIPT + "\n" + readerScript()
+        else -> SCRIPT
+    }
+
+    /**
+     * 阅读页专用的样式注入。
+     *
+     * 单独拼在 [SCRIPT] 后面而不是塞进 SCRIPT 里，是因为这段只在阅读页需要：详情页/首页
+     * 的顶栏和底栏是真要用的，藏起来等于把站点功能砍掉。
+     *
+     * ## 为什么要等 DOM
+     *
+     * 这段脚本的注入时机是 `onPageStarted`，那时 `document.head` **可能还不存在**——
+     * 直接 `return` 会让样式永远注不进去（实测：注入后顶栏仍是 103px）。所以三路兜底：
+     * 立刻试一次、DOMContentLoaded 再来、load 再来，再加一个短轮询兜住前两者都没赶上的
+     * 情况。`apply()` 自身幂等（按 id 查重），重复调用不会堆节点。
+     */
+    private fun readerScript(): String = """
+        (function () {
+          var ID = 'aurora-reader-style';
+          var CSS = ${jsString(READER_HIDE_CSS)};
+
+          function apply() {
+            if (document.getElementById(ID)) return true;
+            if (!document.head) return false;
+            var el = document.createElement('style');
+            el.id = ID;
+            el.textContent = CSS;
+            document.head.appendChild(el);
+            return true;
+          }
+
+          if (apply()) return 'ok';
+          document.addEventListener('DOMContentLoaded', apply);
+          window.addEventListener('load', apply);
+          // 兜底：万一 DOMContentLoaded 已经错过了（注入晚于它），短轮询补上。
+          var tries = 0;
+          var timer = setInterval(function () {
+            if (apply() || ++tries > 40) clearInterval(timer);
+          }, 100);
+          return 'ok';
+        })();
+    """.trimIndent()
 
     val SCRIPT: String = """
         (function () {
-          if (window.__auroraSiteAd) { window.__auroraSiteAd.run(); return 'ok'; }
+          // 重复注入（onPageStarted + onPageFinished + 返回时）只跑一遍清理，但**不能**直接
+          // 返回：同一个 WebView 里换文档时，`document.write` 等原型方法会回到原生实现，
+          // 只靠第一次的包装就漏了。所以这里把「装拦截器」和「跑清理」分开——拦截器每次
+          // 都重新装（幂等，见 installGuards），清理照旧跑。
+          if (window.__auroraSiteAd) {
+            window.__auroraSiteAd.install();
+            window.__auroraSiteAd.run();
+            return 'ok';
+          }
 
           var TAP = '$TAPJACK_CLASS';
           var BANNER = '$BANNER_CLASS';
@@ -334,45 +435,68 @@ object SiteAdRules {
             document.head.appendChild(el);
           }
 
-          // 方块是解析期用 document.write 写出来的。拦在写入这一层，方块根本不会出现，
-          // 也就没有「闪一下再消失」。顺带让第一段脚本拿不到方块、自己抛错停掉。
-          //
-          // **只放行解析期。** `document.write` 在文档加载完成（readyState 不是 loading）
-          // 之后调用会隐式触发 `document.open()`，把整个文档清空再重新解析——页面表现为
-          // 「一直刷新」。实测：加载完后调一次 write，body 文字从 2944 字掉到 4 字、
-          // readyState 从 complete 退回 loading。
-          //
-          // 从阅读页后退回详情页时正好会走到这条路径：站点脚本重跑、我们的注入也重跑，
-          // 而那时文档已经是 complete。所以这里必须判 readyState，不能无条件转发给原生。
-          // 丢掉的 write 只可能是广告或页面加载完之后的迟到写入，两者都不该执行。
-          var nativeWrite = document.write;
-          document.write = function (markup) {
-            if (document.readyState !== 'loading') return;
-            if (hasMarker(String(markup))) return;
-            return nativeWrite.apply(document, arguments);
-          };
+          /**
+           * 装各处拦截器。**幂等**：已装过的用标记跳过，不会套娃。
+           *
+           * 单独抽出来是因为换文档时这些包装会丢（`document.write` 回到原生实现），
+           * 而重复注入时清理逻辑没必要重跑——两者分开，各按各的时机。
+           */
+          function installGuards() {
+            // 方块是解析期用 document.write 写出来的。拦在写入这一层，方块根本不会出现，
+            // 也就没有「闪一下再消失」。顺带让第一段脚本拿不到方块、自己抛错停掉。
+            //
+            // **只放行解析期。** `document.write` 在文档加载完成（readyState 不是 loading）
+            // 之后调用会隐式触发 `document.open()`，把整个文档清空再重新解析——页面表现为
+            // 「一直刷新」。实测：加载完后调一次 write，body 文字从 2944 字掉到 4 字、
+            // readyState 从 complete 退回 loading。
+            //
+            // 从阅读页后退回详情页时正好会走到这条路径：站点脚本重跑、我们的注入也重跑，
+            // 而那时文档已经是 complete。所以这里必须判 readyState，不能无条件转发给原生。
+            // 丢掉的 write 只可能是广告或页面加载完之后的迟到写入，两者都不该执行。
+            if (!document.write.__aurora) {
+              var nativeWrite = document.write;
+              var guarded = function (markup) {
+                if (document.readyState !== 'loading') return;
+                if (hasMarker(String(markup))) return;
+                return nativeWrite.apply(document, arguments);
+              };
+              guarded.__aurora = true;
+              document.write = guarded;
+            }
 
-          // 第二段脚本在 1000ms 后用 insertAdjacentHTML 追加方块。
-          // 这个没有 document.write 那种「清空文档」的副作用，正常转发即可。
-          if (window.Element && Element.prototype.insertAdjacentHTML) {
-            var nativeInsert = Element.prototype.insertAdjacentHTML;
-            Element.prototype.insertAdjacentHTML = function (position, markup) {
-              if (hasMarker(String(markup))) return;
-              return nativeInsert.apply(this, arguments);
-            };
-          }
+            // 第二段脚本在 1000ms 后用 insertAdjacentHTML 追加方块。
+            // 这个没有 document.write 那种「清空文档」的副作用，正常转发即可。
+            if (window.Element && Element.prototype.insertAdjacentHTML &&
+                !Element.prototype.insertAdjacentHTML.__aurora) {
+              var nativeInsert = Element.prototype.insertAdjacentHTML;
+              var guardedInsert = function (position, markup) {
+                if (hasMarker(String(markup))) return;
+                return nativeInsert.apply(this, arguments);
+              };
+              guardedInsert.__aurora = true;
+              Element.prototype.insertAdjacentHTML = guardedInsert;
+            }
 
-          // 广告用 WebSocket 从服务端拉 base64 代码再 new Function 执行，内容是下发的，
-          // 静态规则拦不住——直接掐掉到广告域名的连接。别的 WebSocket 原样放行。
-          if (window.WebSocket) {
-            var NativeWS = window.WebSocket;
-            var Guarded = function (url, protocols) {
-              if (isAdUrl(url)) throw new Error('aurora: blocked');
-              if (protocols === undefined) return new NativeWS(url);
-              return new NativeWS(url, protocols);
-            };
-            Guarded.prototype = NativeWS.prototype;
-            try { window.WebSocket = Guarded; } catch (e) {}
+            // 广告用 WebSocket 从服务端拉 base64 代码再 new Function 执行，内容是下发的，
+            // 静态规则拦不住——直接掐掉到广告域名的连接。别的 WebSocket 原样放行。
+            //
+            // 静态常量（CONNECTING/OPEN/CLOSING/CLOSED）要一起搬过去：站点代码里
+            // `WebSocket.OPEN` 这种写法很常见，漏了会让正常功能坏掉。
+            if (window.WebSocket && !window.WebSocket.__aurora) {
+              var NativeWS = window.WebSocket;
+              var Guarded = function (url, protocols) {
+                if (isAdUrl(url)) throw new Error('aurora: blocked');
+                if (protocols === undefined) return new NativeWS(url);
+                return new NativeWS(url, protocols);
+              };
+              Guarded.prototype = NativeWS.prototype;
+              Guarded.CONNECTING = NativeWS.CONNECTING;
+              Guarded.OPEN = NativeWS.OPEN;
+              Guarded.CLOSING = NativeWS.CLOSING;
+              Guarded.CLOSED = NativeWS.CLOSED;
+              Guarded.__aurora = true;
+              try { window.WebSocket = Guarded; } catch (e) {}
+            }
           }
 
           var observer = null;
@@ -387,9 +511,14 @@ object SiteAdRules {
             observer.observe(document.documentElement, { childList: true, subtree: true });
           }
 
-          window.__auroraSiteAd = { run: run, observe: observe, strip: stripTree };
+          window.__auroraSiteAd = {
+            run: run,
+            observe: observe,
+            strip: stripTree,
+            install: installGuards
+          };
 
-          function boot() { observe(); run(); applyChapterStyle(); }
+          function boot() { installGuards(); observe(); run(); applyChapterStyle(); }
           boot();
           document.addEventListener('DOMContentLoaded', boot);
           window.addEventListener('load', boot);

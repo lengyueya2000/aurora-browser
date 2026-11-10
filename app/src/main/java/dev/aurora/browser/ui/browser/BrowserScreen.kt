@@ -528,6 +528,10 @@ fun BrowserScreen(
                     },
                 )
             } else {
+                // 阅读模式：阅读页上把地址栏和底部工具栏都收起来，让画面铺满。
+                // 只在这个站点的阅读页生效（见 SiteAdRules.isReaderPage），别的页面照旧；
+                // 返回上一页时 URL 变了、这里自然恢复，不需要额外的状态。
+                val readerMode = SiteAdRules.isReaderPage(active.url)
                 Column(modifier = Modifier.fillMaxSize()) {
                     if (active.isIncognito) IncognitoBanner()
                     // 顶部 2dp 加载进度条（规格 5.3）。轨道常驻但透明，仅进度段着色，
@@ -544,29 +548,32 @@ fun BrowserScreen(
                     }
                     // 网页态的地址栏：显示域名 + 站点身份；点击进输入态。
                     // 加载中右侧按钮变「停止加载」（规格 5.3）。
+                    // 阅读模式下整条收起：阅读页要的是画面铺满，地址栏这时候只会占地方。
                     val loading = progress in 1..99
-                    OmniboxBar(
-                        displayUrl = hostOf(active.url),
-                        security = securityOf(active.url, sslWarning = sslWarning),
-                        // 点一下进输入态，并把当前网址预填进输入框（整段选中）：用户要的是
-                        // 「自由编辑网址」，不是「点一下就被复制」——真机反馈原话是
-                        // 「点击输入框，可以自由编辑网址，而不是默认复制」。
-                        //
-                        // 复制这条路没有丢：预填 + 全选之后，系统自带的选区菜单里就有复制，
-                        // 而且是用户主动选、主动点的，比替他把剪贴板冲掉更合适
-                        // （剪贴板里可能正放着他要粘的东西）。
-                        onTap = { vm.openOmnibox(active.url) },
-                        trailingIcon = if (loading) AuroraIcons.Close else AuroraIcons.Refresh,
-                        onTrailingAction = {
-                            if (loading) controller.stopLoading() else controller.reload()
-                        },
-                        // 必须用已 collectAsState 的 bookmarks 列表来判断：StateFlow.value 在
-                        // 组合期读不出订阅，vm.isBookmarked() 只会取到当次组合那一刻的旧值，
-                        // 收藏状态变了星标也不会重绘（真机上就是点完不变色，直到别的状态
-                        // 顺带触发重组才补上）。
-                        bookmarked = bookmarks.any { it.url == active.url },
-                        onToggleBookmark = { vm.toggleBookmark() },
-                    )
+                    if (!readerMode) {
+                        OmniboxBar(
+                            displayUrl = hostOf(active.url),
+                            security = securityOf(active.url, sslWarning = sslWarning),
+                            // 点一下进输入态，并把当前网址预填进输入框（整段选中）：用户要的是
+                            // 「自由编辑网址」，不是「点一下就被复制」——真机反馈原话是
+                            // 「点击输入框，可以自由编辑网址，而不是默认复制」。
+                            //
+                            // 复制这条路没有丢：预填 + 全选之后，系统自带的选区菜单里就有复制，
+                            // 而且是用户主动选、主动点的，比替他把剪贴板冲掉更合适
+                            // （剪贴板里可能正放着他要粘的东西）。
+                            onTap = { vm.openOmnibox(active.url) },
+                            trailingIcon = if (loading) AuroraIcons.Close else AuroraIcons.Refresh,
+                            onTrailingAction = {
+                                if (loading) controller.stopLoading() else controller.reload()
+                            },
+                            // 必须用已 collectAsState 的 bookmarks 列表来判断：StateFlow.value 在
+                            // 组合期读不出订阅，vm.isBookmarked() 只会取到当次组合那一刻的旧值，
+                            // 收藏状态变了星标也不会重绘（真机上就是点完不变色，直到别的状态
+                            // 顺带触发重组才补上）。
+                            bookmarked = bookmarks.any { it.url == active.url },
+                            onToggleBookmark = { vm.toggleBookmark() },
+                        )
+                    }
                     Box(modifier = Modifier.weight(1f)) {
                         WebViewContainer(
                             controller = controller,
@@ -723,7 +730,8 @@ fun BrowserScreen(
             // 悬浮工具栏只在网页/主页态常驻。地址栏聚焦态底部是系统键盘（规格屏 02），
             // 其余二级界面自带页头，都不该再叠一层工具栏。
             // 菜单面板打开时工具栏仍在，但会被面板遮罩盖住（规格屏 06）。
-            if (surface == BrowserSurface.Page) {
+            // 阅读模式下整条收起，和上面的地址栏同一个判据（见 SiteAdRules.isReaderPage）。
+            if (surface == BrowserSurface.Page && !SiteAdRules.isReaderPage(active.url)) {
                 BottomToolbar(
                     tabCount = tabs.size,
                     // 读 State.value 才会在组合期订阅快照，历史变化时工具栏才会重组。

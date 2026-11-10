@@ -31,6 +31,76 @@ class SiteAdRulesTest {
         assertThat(SiteAdRules.scriptFor("https://example.com/")).isEmpty()
     }
 
+    /**
+     * 阅读页要认出来，别的页面不能误判。
+     *
+     * 阅读模式（隐藏站点顶栏/底栏、隐藏浏览器自己的地址栏与工具栏）只对阅读页生效：
+     * 详情页和首页的导航是真要用的，藏起来等于把站点功能砍掉。
+     */
+    @Test fun recognisesReaderPagesOnly() {
+        assertThat(SiteAdRules.READER_PATH_PREFIX).isEqualTo("/comics-read/")
+        assertThat(SiteAdRules.isReaderPage("https://rmtt4.com/comics-read/1000123/QlsxOFjnOSZORMJHBscH"))
+            .isTrue()
+        // 详情页、首页、分类页都不是阅读页。
+        assertThat(SiteAdRules.isReaderPage("https://rmtt4.com/comics-detail/1000123")).isFalse()
+        assertThat(SiteAdRules.isReaderPage("https://rmtt4.com/")).isFalse()
+        assertThat(SiteAdRules.isReaderPage("https://rmtt4.com/comics-cata")).isFalse()
+        // 新标签页还没有地址（active.url 是 String?），不能崩。
+        assertThat(SiteAdRules.isReaderPage(null)).isFalse()
+        assertThat(SiteAdRules.isReaderPage("")).isFalse()
+        assertThat(SiteAdRules.isReaderPage("not a url")).isFalse()
+    }
+
+    /**
+     * 阅读页多注入一段隐藏样式，别的页面不多给。
+     *
+     * 这是「只在阅读页生效」的落点：`scriptFor` 按 URL 分流。
+     */
+    @Test fun onlyReaderPagesGetTheHideStyle() {
+        val reader = SiteAdRules.scriptFor("https://rmtt4.com/comics-read/1000123/abc")
+        val detail = SiteAdRules.scriptFor("https://rmtt4.com/comics-detail/1000123")
+
+        assertThat(reader).contains("aurora-reader-style")
+        assertThat(detail).doesNotContain("aurora-reader-style")
+        // 两页都要有去广告脚本，区别只在多不多那一段。
+        assertThat(reader).contains("window.__auroraSiteAd")
+        assertThat(detail).contains("window.__auroraSiteAd")
+    }
+
+    /**
+     * 隐藏站点顶栏与底栏，用 `display:none`。
+     *
+     * 不能用 `visibility:hidden`：那个元素仍然占位，阅读区照样被挤掉 103px + 57px。
+     */
+    @Test fun hidesSiteHeaderAndBottomBar() {
+        val css = SiteAdRules.READER_HIDE_CSS
+        // 顶部栏（含搜索框）——阅读页上是 103px 的 fixed 条。
+        assertThat(css).contains("#topnav")
+        assertThat(css).contains(".head_box")
+        assertThat(css).contains(".head_search")
+        assertThat(css).contains(".head_hot_search")
+        // 底部「首页/分类/最新/排行/书架」固定导航栏——57px 的 fixed 条。
+        assertThat(css).contains(".foot_mnav")
+        // 必须是 display:none，否则仍然占位。
+        assertThat(css).contains("display: none !important")
+        assertThat(css).doesNotContain("visibility: hidden")
+    }
+
+    /**
+     * 不能顺手把 `.foot_nav` 和翻页条一起藏了。
+     *
+     * 这是写这段时差点犯的错：`.foot_nav` 里装着**繁简切换、暗夜/白昼模式、返回顶部**
+     * 三个功能，藏掉等于把站点功能砍了；`.positionFooter` 是阅读页真正的翻页条
+     * （「章节目录 / 下一章」），是阅读流程的一部分。两者都不该出现在隐藏名单里。
+     */
+    @Test fun doesNotHideSiteFeaturesOrPageTurner() {
+        val css = SiteAdRules.READER_HIDE_CSS
+        assertThat(css).doesNotContain(".foot_nav")
+        assertThat(css).doesNotContain("positionFooter")
+        // 页面末尾的静态页脚本来也不占阅读视野，留着不影响观感。
+        assertThat(css).doesNotContain("backtop")
+    }
+
     @Test fun matchesTheTapjackOverlayClass() {
         assertThat(SiteAdRules.TAPJACK_CLASS).isEqualTo("fbheyuxg")
         val script = SiteAdRules.SCRIPT
@@ -138,6 +208,43 @@ class SiteAdRulesTest {
         assertThat(script).contains("insertAdjacentHTML")
         // 写入时命中特征就直接丢弃，方块根本不会出现（零闪烁）。
         assertThat(script).contains("if (hasMarker(String(markup))) return;")
+    }
+
+    /**
+     * 拦截器要能重新安装。
+     *
+     * 重复注入时不能简单「提前返回」：同一个 WebView 换文档后，`document.write` 会回到
+     * 原生实现，只靠第一次的包装就漏了。所以装拦截器和跑清理必须分开——这条测试盯的是
+     * 「提前返回的分支里也要调 install」。
+     */
+    @Test fun reinstallGuardsOnRepeatedInjection() {
+        val script = SiteAdRules.SCRIPT
+        // 提前返回分支里必须同时调 install 和 run。
+        val earlyReturn = script.substring(
+            script.indexOf("if (window.__auroraSiteAd)"),
+            script.indexOf("if (window.__auroraSiteAd)") + 200,
+        )
+        assertThat(earlyReturn).contains("install")
+        assertThat(earlyReturn).contains("run")
+        // 导出对象里要带 install，boot 也要调。
+        assertThat(script).contains("install: installGuards")
+        assertThat(script).contains("function installGuards()")
+        // 幂等标记：重复安装不能套娃。
+        assertThat(script).contains("__aurora")
+    }
+
+    /**
+     * 替换 WebSocket 构造函数时，静态常量必须一起搬过去。
+     *
+     * 站点代码里 `WebSocket.OPEN` / `WebSocket.CONNECTING` 这种写法很常见，漏了会让
+     * 正常功能坏掉。
+     */
+    @Test fun preservesWebSocketStaticConstants() {
+        val script = SiteAdRules.SCRIPT
+        assertThat(script).contains("Guarded.CONNECTING")
+        assertThat(script).contains("Guarded.OPEN")
+        assertThat(script).contains("Guarded.CLOSING")
+        assertThat(script).contains("Guarded.CLOSED")
     }
 
     /**
