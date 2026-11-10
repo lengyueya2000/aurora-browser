@@ -596,6 +596,60 @@ class WebViewPool(
          * 测试里造不出实例，没法直接驱动 `onReceivedError`。
          */
         internal fun isMainFrameError(request: WebResourceRequest): Boolean = request.isForMainFrame
+
+        /**
+         * 这次「无手势的主框架跳转」是不是该拦。
+         *
+         * ## 为什么要这条判据
+         *
+         * 点击劫持的广告域名**天天换**。实测同一个站点在不同时间跳到过
+         * `yjdh859.com` / `yjdh868.com` / `mmea167.com` / `hm5119t.vip` /
+         * `3376xiu.cc` / `hm4724t.vip` —— 静态域名表永远追不上。但**行为特征不变**：
+         * 用户没点任何链接，页面自己把主框架带去了别的站。
+         *
+         * ## 判定
+         *
+         * - 同站（同 host）→ 放行。站内跳转、重定向都是正常的。
+         * - 同注册域（`a.example.com` → `b.example.com`）→ 放行。跨子域是常规做法。
+         * - 其余 → 拦。
+         *
+         * ## 边界
+         *
+         * 只对**没有手势**的跳转生效：用户真点了链接（`hasGesture()` 为 true）一律放行，
+         * 所以「点一个站外链接」这种正常操作不受影响。没有手势的跨站跳转在正常站点上
+         * 极其罕见（通常是服务端 302 到 CDN，但那种多半同域），代价可以接受。
+         *
+         * 已知会误伤的情况：站点用 `location.href` 跳到外部支付/登录页。目前这个站点
+         * 没有这种流程；将来若有，把目标域加进 [SiteAdRules.AD_HOSTS] 之外的白名单即可。
+         */
+        internal fun isCrossSiteUnguarded(currentUrl: String, targetUrl: String): Boolean {
+            val from = runCatching { java.net.URI(currentUrl).host }.getOrNull()?.lowercase()
+            val to = runCatching { java.net.URI(targetUrl).host }.getOrNull()?.lowercase()
+            // 解析不出来就不拦——宁可漏一次也不要拦坏正常导航。
+            if (from.isNullOrBlank() || to.isNullOrBlank()) return false
+            if (from == to) return false
+            // 同注册域（取最后两段）放行：a.example.com 与 b.example.com。
+            // 注意 `example.co.uk` 这种会被判成 `co.uk`，所以只在两边末两段完全相等
+            // 且都不像公共后缀时才放行——保守起见，只对「末两段相等且长度合理」放行。
+            val fromBase = registrableDomain(from)
+            val toBase = registrableDomain(to)
+            return !(fromBase != null && fromBase == toBase)
+        }
+
+        /**
+         * 取「注册域」的粗略近似：最后两段标签。
+         *
+         * 不引公共后缀表（PSL）——那要带一份几百 KB 的数据，为一个拦截判据不值当。
+         * 这里只用来判断「是不是同一个站」，两段相等就当作同站：`a.example.com` 与
+         * `b.example.com` 都得到 `example.com`。`example.co.uk` 会得到 `co.uk`，
+         * 于是 `a.example.co.uk` 与 `b.other.co.uk` 会被误判成同站而放行——这是
+         * **偏保守（少拦）** 的方向，可以接受：漏拦一次广告好过拦坏一次正常跳转。
+         */
+        internal fun registrableDomain(host: String): String? {
+            val parts = host.split('.').filter { it.isNotEmpty() }
+            if (parts.size < 2) return null
+            return parts.takeLast(2).joinToString(".")
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -679,13 +733,32 @@ class WebViewPool(
                 ): Boolean {
                     val scheme = request.url.scheme?.lowercase().orEmpty()
                     if (scheme == "http" || scheme == "https") {
-                        // 点击劫持的最后一道防线。前面几层（拦 document.write、删节点、掐
-                        // WebSocket）都在 JS 里，注入晚于页面脚本时可能赶不上；这一层不看
-                        // 时序，只要目标是广告域名就拒绝。见 [SiteAdRules]。
+                        // 点击劫持的最后一道防线。前面几层（拦 document.write、删节点、
+                        // 掐 WebSocket、挡全局 touchend）都在 JS 里，注入晚于页面脚本时
+                        // 可能赶不上；这一层不看时序。见 [SiteAdRules]。
                         // 仅当拦截开着才生效——用户关掉拦截就该拿到「原样」的站点。
-                        if (blockTrackers() && SiteAdRules.isAdHost(request.url.toString())) {
+                        if (!blockTrackers()) return false
+
+                        // 第一判据：静态广告域名表。命中最准，但域名会轮换
+                        // （实测见过 yjdh859 → yjdh868 → mmea167 → hm5119t → 3376xiu
+                        // → hm4724t 轮着换），所以不能只靠它。
+                        if (SiteAdRules.isAdHost(request.url.toString())) {
                             onTrackerBlocked(tabId)
                             return true
+                        }
+
+                        // 第二判据：**没有用户手势的跨站跳转**。
+                        //
+                        // 点击劫持的本质就是「用户没点链接，页面自己把主框架带去别处」。
+                        // 这里不看域名——域名天天换，行为特征不变。站内跳转
+                        // （同 host 或同注册域）一律放行，所以正常浏览不受影响。
+                        if (request.isForMainFrame && !request.hasGesture()) {
+                            val current = view.url.orEmpty()
+                            if (isCrossSiteUnguarded(current, request.url.toString())) {
+                                Log.w(TAG, "拦截无手势跨站跳转: $current -> ${request.url}")
+                                onTrackerBlocked(tabId)
+                                return true
+                            }
                         }
                         return false
                     }

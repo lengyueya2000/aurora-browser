@@ -25,6 +25,25 @@ class SiteAdRulesTest {
         assertThat(SiteAdRules.appliesTo("not a url")).isFalse()
     }
 
+    /**
+     * `isReaderPage` 必须同时校验 host。
+     *
+     * 这是审查发现的安全问题：`BrowserScreen` 拿它的结果决定要不要隐藏地址栏和底部
+     * 工具栏，而地址栏是用户判断「我在哪个站」的唯一依据。原来只看 path、注释里写
+     * 「调用方已用 appliesTo 过滤」，但两处调用都没过滤——任意站点把页面放在
+     * `/comics-read/` 路径下，就能让浏览器把地址栏藏起来，那正是钓鱼页想要的状态。
+     *
+     * 所以 host 门禁收进函数内部，不依赖调用方记得先过滤。
+     */
+    @Test fun readerPageRequiresTheTargetHostToo() {
+        // 本站的阅读页：是。
+        assertThat(SiteAdRules.isReaderPage("https://rmtt4.com/comics-read/1000123/abc")).isTrue()
+        // 别的站即使路径一样：不是。这条就是安全边界。
+        assertThat(SiteAdRules.isReaderPage("https://evil.example/comics-read/1000123/abc")).isFalse()
+        assertThat(SiteAdRules.isReaderPage("https://notrmtt4.com/comics-read/x")).isFalse()
+        assertThat(SiteAdRules.isReaderPage("https://rmtt4.com.evil.test/comics-read/x")).isFalse()
+    }
+
     @Test fun scriptForReturnsEmptyForOtherSites() {
         assertThat(SiteAdRules.scriptFor("https://rmtt4.com/")).isEqualTo(SiteAdRules.SCRIPT)
         // 空串而不是 null：调用方要能无条件拼接。
@@ -220,12 +239,11 @@ class SiteAdRulesTest {
     @Test fun reinstallGuardsOnRepeatedInjection() {
         val script = SiteAdRules.SCRIPT
         // 提前返回分支里必须同时调 install 和 run。
-        val earlyReturn = script.substring(
-            script.indexOf("if (window.__auroraSiteAd)"),
-            script.indexOf("if (window.__auroraSiteAd)") + 200,
-        )
-        assertThat(earlyReturn).contains("install")
-        assertThat(earlyReturn).contains("run")
+        val anchor = script.indexOf("var existing = window.__auroraSiteAd")
+        assertThat(anchor).isAtLeast(0)
+        val earlyReturn = script.substring(anchor, minOf(script.length, anchor + 400))
+        assertThat(earlyReturn).contains("existing.install()")
+        assertThat(earlyReturn).contains("existing.run()")
         // 导出对象里要带 install，boot 也要调。
         assertThat(script).contains("install: installGuards")
         assertThat(script).contains("function installGuards()")
@@ -245,6 +263,109 @@ class SiteAdRulesTest {
         assertThat(script).contains("Guarded.OPEN")
         assertThat(script).contains("Guarded.CLOSING")
         assertThat(script).contains("Guarded.CLOSED")
+    }
+
+    /**
+     * 广告地址匹配必须先小写。
+     *
+     * 主机名不区分大小写，`wss://x.QIQ15OD.COM` 是合法写法。原来 `isAdUrl` 是大小写
+     * 敏感的子串匹配，一行大小写就能绕过——而 WebSocket 升级请求**不经过**
+     * `shouldInterceptRequest`，宿主层黑名单兜不住它，这个包装是唯一防线。
+     */
+    @Test fun adUrlMatchingIsCaseInsensitive() {
+        val script = SiteAdRules.SCRIPT
+        // 必须先把整串转小写再比。
+        assertThat(script).contains("String(url).toLowerCase()")
+        // 只认 host 段，不做整串子串匹配（否则 ?ref=xxx 会误伤）。
+        assertThat(script).contains("var host = s.slice(0, end)")
+        // 子域匹配：等于 或 .后缀。
+        assertThat(script).contains("host === h")
+    }
+
+    /**
+     * 全局 touchend 劫持必须挡住。
+     *
+     * 方块只是第一层：站点第二段脚本还在 `document` 上挂了一个 touchend 监听，
+     * 「手指落在距底部 204×(屏宽/620) 像素以内」就跳转（实测该监听确实存在，
+     * 函数体里写着 `top.location=...`）。方块删掉之后它照样在——只删方块，
+     * 劫持面并没有真正归零。
+     *
+     * 做法是在 capture 阶段先注册自己的监听，命中底部窄带就 stopImmediatePropagation。
+     */
+    @Test fun blocksGlobalTouchendHijack() {
+        val script = SiteAdRules.SCRIPT
+        assertThat(script).contains("__auroraTouchGuard")
+        // 必须用 capture 阶段，否则抢不到站点监听前面。
+        assertThat(script).contains("'touchend'")
+        assertThat(script).contains("true);")
+        assertThat(script).contains("stopImmediatePropagation")
+        // 阈值要跟站点一致：204 × (屏宽 / 620)。
+        assertThat(script).contains("204 * (vw / 620)")
+    }
+
+    /**
+     * `document.writeln` 也要拦。
+     *
+     * 它是独立方法，不走被覆盖的 `document.write`——不一起包装的话，广告换成
+     * `writeln` 就绕过了写入层，方块照常出现（只能靠 observer 事后删，「闪一下」）。
+     */
+    @Test fun alsoInterceptsWriteln() {
+        val script = SiteAdRules.SCRIPT
+        assertThat(script).contains("document.writeln")
+        assertThat(script).contains("nativeWriteln")
+    }
+
+    /**
+     * 提前返回前必须校验全局对象类型。
+     *
+     * `window.__auroraSiteAd` 是页面可控的全局：站点或广告脚本随手写个 `{}` 就能让
+     * `install()` 抛 TypeError，连带把清理一起废掉——而 Kotlin 侧的 `runCatching`
+     * 会把这个异常吞掉，只剩一条 debug 日志。
+     */
+    @Test fun validatesTheGlobalBeforeEarlyReturn() {
+        val script = SiteAdRules.SCRIPT
+        assertThat(script).contains("typeof existing.install === 'function'")
+        assertThat(script).contains("typeof existing.run === 'function'")
+    }
+
+    /** observer 要覆盖全部规则，不能只盯方块——否则横幅/弹窗会先渲染再被删（「闪一下」）。 */
+    @Test fun mutationObserverCoversAllRules() {
+        val script = SiteAdRules.SCRIPT
+        val stripIdx = script.indexOf("function stripTree")
+        assertThat(stripIdx).isAtLeast(0)
+        val body = script.substring(stripIdx, minOf(script.length, stripIdx + 700))
+        // stripTree 里要同时处理方块、横幅、弹窗。
+        assertThat(body).contains("BANNER")
+        assertThat(body).contains("GATE")
+        assertThat(body).contains("isBannerNode")
+        assertThat(body).contains("isGateNode")
+    }
+
+    /** 轮询要能退避，不能永远按固定频率全文档扫描。 */
+    @Test fun sweepBacksOffWhenIdle() {
+        val script = SiteAdRules.SCRIPT
+        assertThat(script).contains("idleRounds")
+        assertThat(script).contains("slow")
+        assertThat(script).contains("restartSweep")
+        // 后台标签页跳过。
+        assertThat(script).contains("document.hidden")
+    }
+
+    /** 被丢弃的 write 要有记录，否则「某功能莫名坏掉」无从排查。 */
+    @Test fun recordsDroppedWrites() {
+        val script = SiteAdRules.SCRIPT
+        assertThat(script).contains("countDropped")
+        assertThat(script).contains("dropped")
+        assertThat(script).contains("samples")
+    }
+
+    /** `CHAPTER_LIST_SELECTOR` 不能是死代码——CSS 要由它插值生成。 */
+    @Test fun chapterCssUsesTheSelectorConstant() {
+        val css = SiteAdRules.CHAPTER_CSS
+        assertThat(css).contains(SiteAdRules.CHAPTER_LIST_SELECTOR)
+        // 字号用相对单位，不写死像素（否则会覆盖用户的无障碍字号偏好）。
+        assertThat(css).contains("0.9rem")
+        assertThat(css).doesNotContain("14.42px")
     }
 
     /**
@@ -277,7 +398,7 @@ class SiteAdRulesTest {
      */
     @Test fun removesAdScriptNodesOnlyWhileParsing() {
         val script = SiteAdRules.SCRIPT
-        val marker = "五、广告脚本节点本身"
+        val marker = "广告脚本节点本身"
         val idx = script.indexOf(marker)
         assertThat(idx).isAtLeast(0)
         // 这一段的前面必须紧跟 readyState 判断。

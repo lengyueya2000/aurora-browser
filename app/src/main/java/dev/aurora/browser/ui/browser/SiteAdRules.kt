@@ -135,15 +135,21 @@ object SiteAdRules {
     """.trimIndent()
 
     /**
-     * 是不是阅读页。
+     * 是不是「本站的阅读页」——**host 和 path 都要满足**。
      *
-     * 只看 path，不看 host——调用方已经用 [appliesTo] 过滤过主机了。
-     * 参数可空是因为调用方（`BrowserScreen`）手上的 `active.url` 是 `String?`
-     * （新标签页还没有地址），空值一律当作「不是阅读页」。
+     * 只看 path 是不够的：`BrowserScreen` 拿这个结果决定要不要隐藏地址栏和底部工具栏，
+     * 而地址栏是用户判断「我在哪个站」的唯一依据。任意站点只要把页面放在 `/comics-read/`
+     * 路径下，就能让浏览器把地址栏藏起来——那正好是钓鱼页想要的状态。所以 host 门禁
+     * 收进函数内部，不依赖调用方记得先过滤。
+     *
+     * 参数可空是因为调用方手上的 `active.url` 是 `String?`（新标签页还没有地址），
+     * 空值一律当作「不是阅读页」。
      */
-    fun isReaderPage(url: String?): Boolean =
-        runCatching { java.net.URI(url.orEmpty()).path.orEmpty() }.getOrDefault("")
+    fun isReaderPage(url: String?): Boolean {
+        if (url.isNullOrBlank() || !appliesTo(url)) return false
+        return runCatching { java.net.URI(url).path.orEmpty() }.getOrDefault("")
             .startsWith(READER_PATH_PREFIX)
+    }
 
     /**
      * 识别广告脚本的字符串特征。
@@ -202,16 +208,19 @@ object SiteAdRules {
      *    把容器的 `font-size` 设成 0 消掉这个空白，再在 `li` 上把字号设回来。
      *
      * 这套改动的净效果：202 个按钮全部完整显示、保持 3 列、章节顺序正确、无横向溢出。
+     *
+     * 字号用 `rem` 而不是实测出来的 `14.42px`：那是个具体设备的像素值，换屏宽或用户
+     * 调大系统字号后就不对了，而且写死像素会覆盖用户的无障碍字号偏好。
      */
     val CHAPTER_CSS: String = """
-        .content_playlist {
+        $CHAPTER_LIST_SELECTOR {
           white-space: normal !important;
           height: auto !important;
           max-height: none !important;
           overflow: visible !important;
           font-size: 0 !important;
         }
-        .content_playlist li {
+        $CHAPTER_LIST_SELECTOR li {
           float: none !important;
           display: inline-block !important;
           vertical-align: top !important;
@@ -219,9 +228,9 @@ object SiteAdRules {
           padding-bottom: 0.25rem !important;
           padding-right: 0.25rem !important;
           box-sizing: border-box !important;
-          font-size: 14.42px !important;
+          font-size: 0.9rem !important;
         }
-        .content_playlist li a {
+        $CHAPTER_LIST_SELECTOR li a {
           overflow: visible !important;
           text-overflow: clip !important;
           white-space: normal !important;
@@ -332,9 +341,15 @@ object SiteAdRules {
           // 返回：同一个 WebView 里换文档时，`document.write` 等原型方法会回到原生实现，
           // 只靠第一次的包装就漏了。所以这里把「装拦截器」和「跑清理」分开——拦截器每次
           // 都重新装（幂等，见 installGuards），清理照旧跑。
-          if (window.__auroraSiteAd) {
-            window.__auroraSiteAd.install();
-            window.__auroraSiteAd.run();
+          //
+          // **必须校验类型**：`window.__auroraSiteAd` 是页面可控的全局，站点（或广告脚本）
+          // 随手写个 `{}` 就能让 `install()` 抛 TypeError，连带把清理一起废掉——而 Kotlin
+          // 侧 `runCatching` 会把这个异常吞掉，只剩一条 debug 日志。类型不对就当没装过，
+          // 往下走完整初始化（重装一遍是幂等的）。
+          var existing = window.__auroraSiteAd;
+          if (existing && typeof existing.install === 'function' && typeof existing.run === 'function') {
+            existing.install();
+            existing.run();
             return 'ok';
           }
 
@@ -356,11 +371,61 @@ object SiteAdRules {
             return false;
           }
 
+          /**
+           * 记一笔被丢弃的 `document.write`。
+           *
+           * 丢弃策略是必要的（加载后 write 会清空文档，见 installGuards 的注释），但它
+           * **静默**——站点若在加载完后靠 write 造节点，丢掉之后会 `null.xxx` 抛 TypeError，
+           * 表现为「某功能莫名坏掉」，而且注入的返回值只有 `'ok'`，没有任何线索。
+           *
+           * 这里只记计数与前几条样本，供排查用；不改变行为。
+           */
+          function countDropped(markup) {
+            try {
+              var st = window.__auroraSiteAd;
+              if (!st || !st.dropped) return;
+              st.dropped.count++;
+              if (st.dropped.samples.length < 5) {
+                st.dropped.samples.push(String(markup).slice(0, 200));
+              }
+            } catch (e) {}
+          }
+
+          /**
+           * 这个地址是不是广告域名。
+           *
+           * **必须小写后再比。** 主机名不区分大小写，`wss://x.QIQ15OD.COM` 是合法写法；
+           * 而这里是大小写敏感的子串匹配，不做归一化就会被一行大小写绕过。Kotlin 侧的
+           * [isAdHost] 是 lowercase 过的，两边判据必须一致。
+           *
+           * 这条尤其要紧：WebSocket 的升级请求**不经过** `shouldInterceptRequest`，
+           * 宿主层的域名黑名单兜不住它——这个包装是唯一能挡住「服务端下发代码」的防线。
+           *
+           * 另外只认「协议 + 主机名」那一段，不做整串子串匹配：`?ref=qiq15od.com` 这种
+           * 参数里的偶然出现不该判定成广告地址。
+           */
           function isAdUrl(url) {
             if (!url) return false;
-            var s = String(url);
-            for (var i = 0; i < AD_HOSTS.length; i++) {
-              if (s.indexOf(AD_HOSTS[i]) >= 0) return true;
+            var s = String(url).toLowerCase();
+            // 取出 host 段：// 之后、第一个 / ? # 之前
+            var i = s.indexOf('//');
+            if (i >= 0) s = s.slice(i + 2);
+            var end = s.length;
+            var stops = ['/', '?', '#'];
+            for (var k = 0; k < stops.length; k++) {
+              var p = s.indexOf(stops[k]);
+              if (p >= 0 && p < end) end = p;
+            }
+            var host = s.slice(0, end);
+            // 去掉 userinfo 和端口
+            var at = host.lastIndexOf('@');
+            if (at >= 0) host = host.slice(at + 1);
+            var colon = host.lastIndexOf(':');
+            if (colon >= 0) host = host.slice(0, colon);
+
+            for (var j = 0; j < AD_HOSTS.length; j++) {
+              var h = AD_HOSTS[j];
+              if (host === h || host.slice(-(h.length + 1)) === '.' + h) return true;
             }
             return false;
           }
@@ -369,19 +434,40 @@ object SiteAdRules {
             if (el && el.parentNode) el.parentNode.removeChild(el);
           }
 
-          function isTapNode(el) {
+          /** 元素的 class 里是否含某个特征串。 */
+          function hasClass(el, token) {
             if (!el || el.nodeType !== 1) return false;
             var cls = el.getAttribute ? el.getAttribute('class') : '';
-            return !!cls && cls.indexOf(TAP) >= 0;
+            return !!cls && cls.indexOf(token) >= 0;
           }
 
-          /** 删掉一棵新插入子树里的劫持方块与广告脚本。 */
+          function isTapNode(el) { return hasClass(el, TAP); }
+          function isBannerNode(el) { return hasClass(el, BANNER); }
+
+          /** 年龄弹窗按选择器判定（可能是 `.wrap-dialog-t` 这种完整选择器串）。 */
+          function isGateNode(el) {
+            if (!el || el.nodeType !== 1 || !el.matches) return false;
+            try { return el.matches(GATE); } catch (e) { return false; }
+          }
+
+          /**
+           * 删掉一棵新插入子树里的广告节点。
+           *
+           * 覆盖**全部**规则，不只是方块：横幅和年龄弹窗如果是动态插进来的，只靠 800ms
+           * 轮询会先渲染出来再被删（「闪一下」），年龄弹窗闪一下再消失体感尤其差。
+           *
+           * 一次 `querySelectorAll` 拿齐两类类名，再按类名分流——比扫两遍便宜。
+           */
           function stripTree(root) {
             if (!root || root.nodeType !== 1) return;
-            if (isTapNode(root)) { drop(root); return; }
+            if (isTapNode(root) || isBannerNode(root) || isGateNode(root)) { drop(root); return; }
             if (!root.querySelectorAll) return;
-            var taps = root.querySelectorAll('[class*="' + TAP + '"]');
-            for (var i = 0; i < taps.length; i++) drop(taps[i]);
+
+            var hits = root.querySelectorAll(
+              '[class*="' + TAP + '"], [class*="' + BANNER + '"], ' + GATE
+            );
+            for (var i = 0; i < hits.length; i++) drop(hits[i]);
+
             var scripts = root.querySelectorAll('script');
             for (var j = 0; j < scripts.length; j++) {
               var s = scripts[j];
@@ -391,25 +477,27 @@ object SiteAdRules {
           }
 
           function run() {
-            // 一、点击劫持方块：这是唯一真正挡住手指的东西，先删它。
-            var taps = document.querySelectorAll('[class*="' + TAP + '"]');
-            for (var i = 0; i < taps.length; i++) drop(taps[i]);
+            // 一、点击劫持方块 + 底部横幅广告，**一次查询拿齐**。
+            //     `[class*=...]` 走不了样式索引，必须逐元素读 class，所以两次全文档扫
+            //     和一次差别明显（长页面 1–2 万节点）。横幅是把一张大图切成若干 fixed
+            //     小块拼出来的，每个节点单独看都不像广告，只能按类名整组删。
+            var hits = document.querySelectorAll(
+              '[class*="' + TAP + '"], [class*="' + BANNER + '"]'
+            );
+            for (var i = 0; i < hits.length; i++) drop(hits[i]);
 
-            // 二、底部横幅广告。它把一张大图切成若干 fixed 小块拼出来，所以每个节点都
-            //     看不出是广告，只有整组拼起来才是——按类名整组删。
-            var banners = document.querySelectorAll('[class*="' + BANNER + '"]');
-            for (var b = 0; b < banners.length; b++) drop(banners[b]);
-
-            // 三、广告插进来的样式：不删的话 body 底部会多出 100px 空白。
+            // 二、广告插进来的样式：不删的话 body 底部会多出 100px 空白。
             drop(document.getElementById(STYLE_ID));
 
-            // 四、年龄确认弹窗：整个节点删掉。
+            // 三、年龄确认弹窗：整个节点删掉。
             var gates = document.querySelectorAll(GATE);
             for (var j = 0; j < gates.length; j++) drop(gates[j]);
 
-            // 五、广告脚本节点本身。已经执行过的删掉不会「撤销」，但能防止它被再次触发。
-            //     只在解析期做：文档加载完后站点脚本还会重跑，这时删 <script> 节点没有
-            //     任何收益，反而会让页面重新解析一遍（和 document.write 同一个坑）。
+            // 四、广告脚本节点本身。**只在解析期做**：文档加载完后站点脚本还会重跑，
+            //     这时删 <script> 节点没有任何收益，反而会扰动页面重新解析（和
+            //     document.write 同一个坑）。另外要清楚：parser-inserted 的脚本一旦
+            //     开始准备执行，移出 DOM 并不阻止它执行——这里的作用是「防重入」，
+            //     不是「防执行」。
             if (document.readyState === 'loading') {
               var scripts = document.querySelectorAll('script');
               for (var k = 0; k < scripts.length; k++) {
@@ -456,12 +544,32 @@ object SiteAdRules {
             if (!document.write.__aurora) {
               var nativeWrite = document.write;
               var guarded = function (markup) {
-                if (document.readyState !== 'loading') return;
-                if (hasMarker(String(markup))) return;
+                if (document.readyState !== 'loading') {
+                  countDropped(markup);
+                  return;
+                }
+                if (hasMarker(String(markup))) { countDropped(markup); return; }
                 return nativeWrite.apply(document, arguments);
               };
               guarded.__aurora = true;
               document.write = guarded;
+            }
+
+            // `writeln` 是独立方法，不走被覆盖的 `document.write`——不一起包装的话，
+            // 广告换成 writeln 就绕过了写入层，方块照常出现（只能靠 observer 事后删，
+            // 回到「闪一下」）。它自动补换行，判定用原样参数即可。
+            if (document.writeln && !document.writeln.__aurora) {
+              var nativeWriteln = document.writeln;
+              var guardedLn = function (markup) {
+                if (document.readyState !== 'loading') {
+                  countDropped(markup);
+                  return;
+                }
+                if (hasMarker(String(markup))) { countDropped(markup); return; }
+                return nativeWriteln.apply(document, arguments);
+              };
+              guardedLn.__aurora = true;
+              document.writeln = guardedLn;
             }
 
             // 第二段脚本在 1000ms 后用 insertAdjacentHTML 追加方块。
@@ -497,6 +605,37 @@ object SiteAdRules {
               Guarded.__aurora = true;
               try { window.WebSocket = Guarded; } catch (e) {}
             }
+
+            // **全局 touchend 劫持。** 方块只是第一层：站点第二段脚本还在 `document` 上挂了
+            // 一个 touchend 监听，判据是「手指落在距底部 204×(屏宽/620) 像素以内」就跳转
+            // （实测 document 级监听存在，函数体里就写着 `top.location=...`）。方块删掉之后
+            // 这个监听照样在——之前只删方块，劫持面并没有真正归零。
+            //
+            // 做法：在 **capture 阶段**先注册一个自己的 touchend，命中底部区域就
+            // `stopImmediatePropagation()`，让站点的监听收不到事件。capture 先于冒泡，
+            // 且同一阶段按注册顺序执行——我们在页面脚本之前注入，所以一定排在它前面。
+            //
+            // 只拦「底部那条窄带」，不是整个页面的触摸：用户正常点翻页条/正文区域不受影响。
+            if (!document.__auroraTouchGuard) {
+              document.__auroraTouchGuard = true;
+              document.addEventListener('touchend', function (e) {
+                try {
+                  var t = e.changedTouches && e.changedTouches[0];
+                  if (!t) return;
+                  var y = typeof t.clientY === 'number' ? t.clientY : t.screenY;
+                  if (typeof y !== 'number') return;
+                  var vh = window.innerHeight || 0;
+                  var vw = window.screen ? window.screen.availWidth : 0;
+                  if (!vh || !vw) return;
+                  // 站点用的阈值：204 × (屏宽 / 620)，向下取整。
+                  var band = 204 * (vw / 620);
+                  if (y > vh - band) {
+                    e.stopImmediatePropagation();
+                    e.preventDefault();
+                  }
+                } catch (err) {}
+              }, true);
+            }
           }
 
           var observer = null;
@@ -515,15 +654,48 @@ object SiteAdRules {
             run: run,
             observe: observe,
             strip: stripTree,
-            install: installGuards
+            install: installGuards,
+            // 被丢弃的 document.write 记录，供排查「某功能莫名坏掉」时定位。
+            dropped: { count: 0, samples: [] }
           };
 
           function boot() { installGuards(); observe(); run(); applyChapterStyle(); }
           boot();
           document.addEventListener('DOMContentLoaded', boot);
           window.addEventListener('load', boot);
-          // 第二段脚本在 1000ms / 1500ms 后还会动作，所以要有节奏地扫。
-          setInterval(function () { if (!document.hidden) { run(); applyChapterStyle(); } }, SWEEP_MS);
+
+          // 有节奏地扫。广告浮层出现在「点播放之后」、横幅是随机投放的，一次性清理
+          // 兜不住。但**不能**一直按固定频率扫：长页面每轮都是 1–2 万节点的属性子串
+          // 扫描，永不退避就是持续的帧时间抖动。
+          //
+          // 退避策略：连续 5 轮没有命中就把间隔拉到 5 秒；一旦又扫到东西（说明广告
+          // 又开始活动了），立刻回到快扫。后台标签页直接跳过。
+          var idleRounds = 0;
+          var slow = false;
+          function sweep() {
+            if (document.hidden) return;
+            var found = false;
+            try {
+              // 先探一下有没有要处理的，避免每轮都跑完整 run()。
+              found = !!document.querySelector('[class*="' + TAP + '"], [class*="' + BANNER + '"]');
+            } catch (e) {}
+            if (found) {
+              idleRounds = 0;
+              if (slow) { slow = false; restartSweep(); }
+              run();
+            } else {
+              idleRounds++;
+              if (!slow && idleRounds >= 5) { slow = true; restartSweep(); }
+            }
+            applyChapterStyle();
+          }
+
+          var sweepTimer = null;
+          function restartSweep() {
+            if (sweepTimer) clearInterval(sweepTimer);
+            sweepTimer = setInterval(sweep, slow ? SWEEP_MS * 6 : SWEEP_MS);
+          }
+          restartSweep();
         })();
     """.trimIndent()
 }
