@@ -259,6 +259,9 @@ class PlayerActivity : ComponentActivity() {
     @Volatile
     private var destroyed = false
 
+    /** 进小窗那一刻是否在播；回来时只恢复本来就在播的，不替用户自作主张开播。 */
+    private var wasPlayingInPip = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val url = intent.getStringExtra(EXTRA_URL)
@@ -730,6 +733,22 @@ class PlayerActivity : ComponentActivity() {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         inPip.value = isInPictureInPictureMode
+
+        // 从小窗点回来，继续播放。
+        //
+        // 为什么需要显式做：切到小窗时系统会改变 Activity 的生命周期状态，部分机型
+        // 会把播放器一起暂停；回到全屏后用户看到的是停住的画面，得再点一次播放。
+        // 用户要的是「点回来接着看」，不是「点回来还得再点一下」。
+        //
+        // 只在**退出小窗**时恢复，不强制全屏（用户要的是普通界面继续播，自己决定
+        // 要不要再进全屏）。原来在播才恢复——如果用户进小窗前就是暂停的，回来
+        // 不该自作主张播起来，所以用 wasPlayingInPip 记住进小窗那一刻的状态。
+        if (isInPictureInPictureMode) {
+            wasPlayingInPip = player?.playWhenReady == true
+        } else if (wasPlayingInPip) {
+            player?.playWhenReady = true
+            wasPlayingInPip = false
+        }
     }
 
     /**
@@ -1595,7 +1614,8 @@ private fun PlayerControls(
             }
         }
 
-        // 右上角：把画面交出去的两个动作。
+        // 右上角：时间/电量 + 把画面交出去的两个动作。
+        // 时间/电量跟控制层同一层，所以闲置 3.5 秒后随控制层一起收起——不用自己计时。
         Row(
             Modifier
                 .align(Alignment.TopEnd)
@@ -1603,6 +1623,7 @@ private fun PlayerControls(
             horizontalArrangement = Arrangement.spacedBy(AuroraSpacing.s),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            PlayerStatusOverlay(visible = true)
             ControlChip("小窗", active = false, onClick = onPip)
             ControlChip("投屏", active = false, onClick = onCast)
         }

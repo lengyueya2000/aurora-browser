@@ -87,4 +87,24 @@ class BottomToolbarTest {
         render()
         compose.onNodeWithContentDescription("标签页，3 个").assertHasClickAction()
     }
+
+    /**
+     * 底栏是贴屏幕底边的平条：通栏、固定高度、不再有悬浮胶囊的圆角和外边距。
+     *
+     * 原实现是 58dp 胶囊 + 上下各 24dp 外边距（`BottomToolbarHeight = 106dp`），
+     * 改成贴边平条后基准高度应是 48dp 触摸目标 + 上下各 8dp = 64dp。
+     * 这个值被首页留白、网页底部留白、缩略图拍摄避让三处共用，错了就会
+     * 要么盖住内容、要么底部多出一截空白。
+     */
+    @Test fun bottomToolbarHeightMatchesTheFlatBar() {
+        assertThat(BottomToolbarHeight.value).isEqualTo(64f)
+    }
+
+    /** 五个按钮改样式后一个都不能少。 */
+    @Test fun stillRendersAllFiveSlots() {
+        render()
+        listOf("后退", "前进", "主页", "标签页，3 个", "更多").forEach {
+            compose.onNodeWithContentDescription(it).assertExists()
+        }
+    }
 }

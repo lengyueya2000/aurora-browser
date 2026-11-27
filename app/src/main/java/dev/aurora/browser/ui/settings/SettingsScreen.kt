@@ -38,6 +38,9 @@ fun SettingsScreen(
     onBack: () -> Unit,
     /** 必填：由调用方传 `BuildConfig.VERSION_NAME`，不给默认值就不会和 versionName 漂移。 */
     versionName: String,
+    /** 「检查更新」那行的状态文案，由 UpdateViewModel 提供。 */
+    updateStatusText: String = "点击检查",
+    onCheckUpdate: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val c = Aurora.colors
@@ -109,6 +112,11 @@ fun SettingsScreen(
 
             SettingGroup("关于")
             SettingRow(title = "版本", value = versionName)
+            SettingRow(
+                title = "检查更新",
+                subtitle = updateStatusText,
+                onClick = onCheckUpdate,
+            )
             SettingRow(title = "开源协议", value = "MIT")
             SettingRow(title = "项目主页", subtitle = "github.com/lengyueya2000/aurora-browser")
 

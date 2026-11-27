@@ -139,6 +139,8 @@ private val SheetContentMaxHeight = 460.dp
 fun BrowserScreen(
     modifier: Modifier = Modifier,
     vm: BrowserViewModel = viewModel(factory = rememberAuroraViewModelFactory()),
+    /** 更新检测的 ViewModel，由 MainActivity 持有并共享（启动弹窗也在那里显示）。 */
+    updateVm: dev.aurora.browser.ui.update.UpdateViewModel? = null,
 ) {
     val context = LocalContext.current
 
@@ -723,6 +725,8 @@ fun BrowserScreen(
                     },
                     onBack = { vm.closeSecondarySurface() },
                     versionName = BuildConfig.VERSION_NAME,
+                    updateStatusText = updateVm?.statusText() ?: "点击检查",
+                    onCheckUpdate = { updateVm?.manualCheck() },
                 )
                 BrowserSurface.Page -> Unit
             }

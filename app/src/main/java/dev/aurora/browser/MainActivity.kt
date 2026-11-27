@@ -45,6 +45,7 @@ import dev.aurora.browser.ui.theme.AuroraSpacing
 import dev.aurora.browser.ui.theme.AuroraTheme
 import dev.aurora.browser.ui.theme.DarkAuroraColors
 import dev.aurora.browser.ui.theme.LightAuroraColors
+import dev.aurora.browser.ui.update.UpdateViewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
         // 主题偏好放在 Application 容器里：设置页写它、这里读它，必须是同一份 StateFlow，
         // 否则切完主题要等下次启动才生效。
         val store = (application as AuroraApp).store
+        val updateVm = UpdateViewModel(this, BuildConfig.VERSION_NAME)
         setContent {
             val mode by store.themeMode.collectAsState()
             val dark = mode.isDark(isSystemInDarkTheme())
@@ -76,13 +78,18 @@ class MainActivity : ComponentActivity() {
                 window.setBackgroundDrawable(ColorDrawable(windowBg.toArgb()))
             }
 
+            // 启动静默检查更新：有新版直接弹窗（用户可在弹窗里忽略该版本）。
+            // 24 小时节流与失败静默都在 UpdateViewModel 里。
+            LaunchedEffect(Unit) { updateVm.autoCheck() }
+
             AuroraTheme(dark = dark) {
                 CrashReportDialog()
+                UpdateDialog(updateVm)
                 // color = colors.bg：Surface 默认取 colorScheme.surface，
                 // 与规格的页面底色 bg 不是同一个值，必须显式指定。
                 Surface(modifier = Modifier.fillMaxSize(), color = Aurora.colors.bg) {
                     // 状态栏/手势条避让在 BrowserScreen 内部统一处理
-                    BrowserScreen()
+                    BrowserScreen(updateVm = updateVm)
                 }
             }
         }
@@ -141,6 +148,51 @@ private fun CrashReportDialog() {
         },
         dismissButton = {
             TextButton(onClick = { CrashLog.clear(context); text = null }) { Text("关闭") }
+        },
+    )
+}
+
+/**
+ * 有新版本时弹出来，展示版本号与更新说明，两个选择：前往下载 / 忽略此版本。
+ *
+ * 弹窗状态由 [UpdateViewModel] 持有，这里只负责显示——启动检查和设置页手动检查
+ * 走的是同一个弹窗，不需要两处 UI。
+ */
+@Composable
+private fun UpdateDialog(vm: UpdateViewModel) {
+    val available by vm.dialog.collectAsState()
+    val info = available?.info ?: return
+    // 更新说明可能很长（README 级别的），只显示前 400 字符，够看重点又不撑爆屏幕。
+    val notes = info.notes.trim().let { if (it.length > 400) it.take(400) + "…" else it }
+
+    AlertDialog(
+        onDismissRequest = { vm.dismiss() },
+        title = { Text("发现新版本：${info.version}", color = Aurora.colors.text) },
+        text = {
+            Column {
+                Text(
+                    "当前版本 ${BuildConfig.VERSION_NAME}，可更新到 ${info.version}。",
+                    color = Aurora.colors.textSecondary,
+                    fontSize = 13.sp,
+                )
+                if (notes.isNotEmpty()) {
+                    Text(
+                        notes,
+                        color = Aurora.colors.text,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .padding(top = AuroraSpacing.s)
+                            .heightIn(max = 280.dp)
+                            .verticalScroll(rememberScrollState()),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { vm.openReleasePage() }) { Text("前往下载") }
+        },
+        dismissButton = {
+            TextButton(onClick = { vm.ignore() }) { Text("忽略此版本") }
         },
     )
 }
