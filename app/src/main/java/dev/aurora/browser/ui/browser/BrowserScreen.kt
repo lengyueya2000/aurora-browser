@@ -159,6 +159,10 @@ fun BrowserScreen(
     val themeMode by vm.themeMode.collectAsState()
     val trackerCount by vm.trackerCount.collectAsState()
     val sslWarning by vm.sslWarning.collectAsState()
+    // 更新检测的状态文案必须是 State 读取，否则设置页那行不会随检查结果重组。
+    // 没有 updateVm（预览/单测）时给一个稳定的空流，不能每次组合都 new 一个。
+    val fallbackStatus = remember { kotlinx.coroutines.flow.MutableStateFlow("点击检查") }
+    val updateStatusText by (updateVm?.statusText ?: fallbackStatus).collectAsState()
     val message by vm.message.collectAsState()
 
     val controller = remember { MutableBrowserController() }
@@ -725,7 +729,7 @@ fun BrowserScreen(
                     },
                     onBack = { vm.closeSecondarySurface() },
                     versionName = BuildConfig.VERSION_NAME,
-                    updateStatusText = updateVm?.statusText() ?: "点击检查",
+                    updateStatusText = updateStatusText,
                     onCheckUpdate = { updateVm?.manualCheck() },
                 )
                 BrowserSurface.Page -> Unit

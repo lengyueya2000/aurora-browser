@@ -9,8 +9,11 @@ import dev.aurora.browser.data.UpdatePreferences
 import dev.aurora.browser.data.UpdateRepository
 import dev.aurora.browser.domain.UpdateChecker
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -42,6 +45,23 @@ class UpdateViewModel(
 
     private val _status = MutableStateFlow<Status>(Status.Idle)
     val status: StateFlow<Status> = _status.asStateFlow()
+
+    /**
+     * 给设置页显示的状态文案。
+     *
+     * **必须是 StateFlow 而不是 `statusText()` 函数**：Compose 只在组合期读到 Snapshot
+     * State 才会订阅。原来的写法在 BrowserScreen 里调 `updateVm.statusText()`，读的是
+     * 一次性的普通属性——状态从「点击检查」变成「正在检查…」时不会重组，界面永远
+     * 停在旧文案上（模拟机上实测就是这个症状）。
+     */
+    val statusText: StateFlow<String> = _status.map { status ->
+        when (status) {
+            Status.Idle -> "点击检查"
+            Status.Checking -> "正在检查…"
+            Status.UpToDate -> "已是最新版本"
+            Status.Failed -> "检查失败，请稍后重试"
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "点击检查")
 
     private val _dialog = MutableStateFlow<Available?>(null)
     val dialog: StateFlow<Available?> = _dialog.asStateFlow()
@@ -99,10 +119,4 @@ class UpdateViewModel(
         _dialog.value = null
     }
 
-    fun statusText(): String = when (_status.value) {
-        Status.Idle -> "点击检查"
-        Status.Checking -> "正在检查…"
-        Status.UpToDate -> "已是最新版本"
-        Status.Failed -> "检查失败，请稍后重试"
-    }
 }
